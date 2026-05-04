@@ -1,6 +1,6 @@
 ---
 name: Feedback
-about: 建议 / 反馈
+about: 功能 / 建议 / 反馈
 title: ""
 labels: ""
 assignees: ""
