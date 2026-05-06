@@ -79,6 +79,15 @@ const SettingsFooter = ({
                         try {
                             // Fetch latest release info directly from GitHub API
                             const response = await fetch('https://api.github.com/repos/eq1024/WinPaste/releases/latest');
+                            
+                            if (response.status === 403 || response.status === 429) {
+                                // GitHub API Rate Limit exceeded
+                                console.warn('GitHub API rate limit exceeded, opening browser instead');
+                                setUpdateStatus('');
+                                openUrl('https://github.com/eq1024/WinPaste/releases/latest');
+                                return;
+                            }
+
                             if (!response.ok) throw new Error('GitHub API unreachable');
 
                             const data = await response.json();
