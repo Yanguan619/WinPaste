@@ -20,6 +20,8 @@ export const useSettingsPostInit = ({
     setCaptureFiles,
     setCaptureRichText,
     setRichTextSnapshotPreview,
+    setAutoHideTags,
+    setPinnedCollapsed,
     setPrivacyProtection,
     setPrivacyProtectionKinds,
     setPrivacyProtectionCustomRules,
@@ -77,6 +79,8 @@ export const useSettingsPostInit = ({
     if (settings["app.capture_files"] !== undefined) setCaptureFiles(settings["app.capture_files"] === 'true');
     if (settings["app.capture_rich_text"] !== undefined) setCaptureRichText(settings["app.capture_rich_text"] === 'true');
     if (settings["app.rich_text_snapshot_preview"] !== undefined) setRichTextSnapshotPreview(settings["app.rich_text_snapshot_preview"] === 'true');
+    if (settings["app.auto_hide_tags"] !== undefined) setAutoHideTags(settings["app.auto_hide_tags"] === 'true');
+    if (settings["app.pinned_collapsed"] !== undefined) setPinnedCollapsed(settings["app.pinned_collapsed"] === 'true');
     if (settings["app.privacy_protection"] !== undefined) setPrivacyProtection(settings["app.privacy_protection"] === 'true');
     if (settings["app.privacy_protection_kinds"] !== undefined) {
       setPrivacyProtectionKinds(settings["app.privacy_protection_kinds"].split(',').map(s => s.trim()).filter(Boolean));

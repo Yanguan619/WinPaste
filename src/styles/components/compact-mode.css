@@ -210,6 +210,12 @@
     z-index: 100;
 }
 
+body:not(.dark-mode) .history-item.compact .item-actions {
+    background: rgba(255, 255, 255, 0.95) !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+}
+
 .history-item.compact:hover .item-actions {
     opacity: 1;
     visibility: visible;
@@ -235,6 +241,15 @@
     background: var(--bg-button);
     color: var(--text-primary);
     transform: scale(1.05);
+}
+
+body:not(.dark-mode) .history-item.compact .item-actions .btn-icon {
+    color: #555;
+}
+
+body:not(.dark-mode) .history-item.compact .item-actions .btn-icon:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: #111;
 }
 
 .history-item.compact .item-actions .btn-icon.active {

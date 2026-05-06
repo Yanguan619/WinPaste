@@ -150,12 +150,24 @@ select.search-input option {
   box-shadow: var(--shadow-md) !important;
   width: 36px !important;
   height: 36px !important;
+  color: #fff !important;
+}
+
+body:not(.dark-mode) .scroll-top-button {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  color: #333 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
 }
 
 .scroll-top-button:hover {
   background: var(--bg-button) !important;
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg) !important;
+}
+
+body:not(.dark-mode) .scroll-top-button:hover {
+  color: #000 !important;
 }
 
 .virtual-list-wrapper [data-virtuoso-scroller="true"] {

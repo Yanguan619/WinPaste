@@ -373,7 +373,7 @@ const ClipboardItem = ({
     disableLayout,
     t
 }: ClipboardItemProps & { t: (key: string) => string }) => {
-    const { language, richTextSnapshotPreview, showSourceAppIcon, compactMode, privacyProtection, autoHideTags } = useSettingsStore();
+    const { language, richTextSnapshotPreview, showSourceAppIcon, compactMode, privacyProtection, autoHideTags, colorMode } = useSettingsStore();
     const { tagInput, revealedIds, editingTagsId } = useHistoryStore();
     const isSelected = useHistoryStore(s => s.isKeyboardMode && index === s.selectedIndex);
 
@@ -440,7 +440,7 @@ const ClipboardItem = ({
         await ensureCompactPreviewLifecycleListeners(); await ensureCompactPreviewResizeListener(); await waitForCompactPreviewMounted();
         try {
             compactPreviewPendingShow = true; compactPreviewPendingAnchor = anchor;
-            await previewWindow.emit("compact-preview-update", { contentType: item.content_type, content: item.content, preview: item.preview, htmlContent: item.html_content, sourceApp: item.source_app, timestamp: item.timestamp, language, theme: "fluent", colorMode: "dark", richTextSnapshotPreview });
+            await previewWindow.emit("compact-preview-update", { contentType: item.content_type, content: item.content, preview: item.preview, htmlContent: item.html_content, sourceApp: item.source_app, timestamp: item.timestamp, language, theme: "fluent", colorMode, richTextSnapshotPreview });
             if (compactPreviewPendingTimer) clearTimeout(compactPreviewPendingTimer);
             compactPreviewPendingTimer = setTimeout(async () => { if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) return; try { await placeAndShowPendingCompactPreview(320, 220, { keepPending: true }); } catch (err) {} }, 200);
         } catch (err) { compactPreviewWindow = null; compactPreviewMounted = false; compactPreviewMountedPromise = null; }

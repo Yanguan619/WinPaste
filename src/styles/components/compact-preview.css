@@ -61,6 +61,14 @@ body.compact-preview #root>* {
     color: #e0e0e0;
 }
 
+body.light-mode .compact-preview-root .compact-popover-portal.compact-preview-window,
+.compact-preview-root .compact-popover-portal.compact-preview-window.light-mode {
+    background: #ffffff !important;
+    border: 1px solid rgba(0, 0, 0, 0.15) !important;
+    color: #333333;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+}
+
 /* Keep compact preview visually single-layer. */
 .compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta,
 .compact-preview-root .compact-popover-portal.compact-preview-window .popover-content,

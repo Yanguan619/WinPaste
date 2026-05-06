@@ -102,10 +102,17 @@ const applyTheme = (payload: PreviewPayload) => {
     root.classList.add("theme-fluent");
     body.classList.add("theme-fluent");
 
-    root.classList.add("dark-mode");
-    body.classList.add("dark-mode");
-    root.classList.remove("light-mode");
-    body.classList.remove("light-mode");
+    if (payload.colorMode === "light") {
+        root.classList.add("light-mode");
+        body.classList.add("light-mode");
+        root.classList.remove("dark-mode");
+        body.classList.remove("dark-mode");
+    } else {
+        root.classList.add("dark-mode");
+        body.classList.add("dark-mode");
+        root.classList.remove("light-mode");
+        body.classList.remove("light-mode");
+    }
 
     body.classList.add("compact-preview");
 
@@ -372,7 +379,7 @@ const CompactPreviewWindow = () => {
         <div className="compact-preview-root">
             <div
                 ref={containerRef}
-                className={`compact-popover-portal compact-preview-window theme-fluent ${payload?.contentType === "image" ? "compact-preview-image" : ""} ${payload?.contentType === "image" || payload?.contentType === "video" || !!effectiveRichImageFallbackSrc ? "compact-preview-media" : ""} dark-mode`}
+                className={`compact-popover-portal compact-preview-window theme-fluent ${payload?.contentType === "image" ? "compact-preview-image" : ""} ${payload?.contentType === "image" || payload?.contentType === "video" || !!effectiveRichImageFallbackSrc ? "compact-preview-media" : ""} ${payload?.colorMode === 'light' ? 'light-mode' : 'dark-mode'}`}
                 style={{ display: "flex", flexDirection: "column" }}
             >
                 <div ref={metaRef} className="popover-meta">
