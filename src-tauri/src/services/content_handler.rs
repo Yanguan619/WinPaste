@@ -19,6 +19,17 @@ pub async fn open_content(
     mut content: String,
     content_type: String,
 ) -> Result<(), AppError> {
+    if (content_type == "image" || content_type == "file" || content_type == "video") && !content.starts_with("data:image") {
+        let first_file = content.lines().next().unwrap_or(&content);
+        let clean_path = if first_file.starts_with("file://") {
+            first_file.strip_prefix("file://").unwrap_or(first_file)
+        } else {
+            first_file
+        };
+        if !std::path::Path::new(clean_path).exists() {
+            return Err(AppError::IO("File not found".to_string()));
+        }
+    }
     // 0. Resolve full content if ID is provided and content is placeholder/truncated
     if id != 0 {
         if id > 0 {

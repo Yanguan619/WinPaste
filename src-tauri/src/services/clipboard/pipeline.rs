@@ -2,7 +2,6 @@ use tauri::{AppHandle, Manager, Emitter};
 use crate::domain::models::ClipboardEntry;
 use crate::app_state::{SettingsState, SessionHistory, AppDataDir, PasteQueue};
 use crate::database::DbState;
-use crate::database::is_text_type;
 use crate::services::clipboard::utils::*;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -103,16 +102,21 @@ impl PipelineStage for DiscoveryStage {
                     if lower.ends_with(".gif") {
                          ("image".to_string(), path.clone(), None)
                     } else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".bmp") || lower.ends_with(".webp") {
-                        if let Ok(img_data) = std::fs::read(path) {
-                            if let Ok(img) = image::load_from_memory(&img_data) {
-                                let mut bytes: Vec<u8> = Vec::new();
-                                let mut cursor = std::io::Cursor::new(&mut bytes);
-                                if img.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
-                                    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-                                    ("image".to_string(), format!("data:image/png;base64,{}", b64), None)
-                                } else { ("file".to_string(), content, None) }
-                            } else { ("file".to_string(), content, None) }
-                        } else { ("file".to_string(), content, None) }
+                        if let Ok(metadata) = std::fs::metadata(path) {
+                            // If file size > 1MB (1024 * 1024 bytes), just save path
+                            if metadata.len() > 1024 * 1024 {
+                                ("image".to_string(), path.clone(), None)
+                            } else if let Ok(img_data) = std::fs::read(path) {
+                                if let Ok(img) = image::load_from_memory(&img_data) {
+                                    let mut bytes: Vec<u8> = Vec::new();
+                                    let mut cursor = std::io::Cursor::new(&mut bytes);
+                                    if img.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
+                                        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+                                        ("image".to_string(), format!("data:image/png;base64,{}", b64), None)
+                                    } else { ("image".to_string(), path.clone(), None) }
+                                } else { ("image".to_string(), path.clone(), None) }
+                            } else { ("image".to_string(), path.clone(), None) }
+                        } else { ("image".to_string(), path.clone(), None) }
                     } else if lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".avi") || lower.ends_with(".mov") || lower.ends_with(".wmv") || lower.ends_with(".flv") || lower.ends_with(".webm") {
                         ("video".to_string(), path.clone(), None)
                     } else { ("file".to_string(), content, None) }
@@ -126,6 +130,18 @@ impl PipelineStage for DiscoveryStage {
 
         let is_external = (content_type == "file" || content_type == "video" || content_type == "image")
             && !content.starts_with("data:");
+
+        let file_preview_exists = if is_external {
+            let first_file = content.lines().next().unwrap_or(&content);
+            let clean_path = if first_file.starts_with("file://") {
+                first_file.strip_prefix("file://").unwrap_or(first_file)
+            } else {
+                first_file
+            };
+            std::path::Path::new(clean_path).exists()
+        } else {
+            true
+        };
 
         ctx.entry = Some(ClipboardEntry {
             id: 0,
@@ -141,7 +157,7 @@ impl PipelineStage for DiscoveryStage {
             use_count: 0,
             is_external,
             pinned_order: 0,
-            file_preview_exists: true,
+            file_preview_exists,
         });
     }
 }

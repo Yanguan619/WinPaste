@@ -397,7 +397,7 @@ pub fn reset_settings(
     let main_hotkey = state.settings_repo.get("app.hotkey").unwrap_or(Some("Alt+C".to_string())).unwrap_or("Alt+C".to_string());
     let seq_hotkey = state.settings_repo.get("app.sequential_hotkey").unwrap_or(Some("Alt+V".to_string())).unwrap_or("Alt+V".to_string());
     let rich_hotkey = state.settings_repo.get("app.rich_paste_hotkey").unwrap_or(Some("Ctrl+Shift+Z".to_string())).unwrap_or("Ctrl+Shift+Z".to_string());
-    let search_hotkey = state.settings_repo.get("app.search_hotkey").unwrap_or(Some("Alt+F".to_string())).unwrap_or("Alt+F".to_string());
+    let search_hotkey = state.settings_repo.get("app.search_hotkey").unwrap_or(Some("".to_string())).unwrap_or("".to_string());
 
     { let mut guard = settings_state.main_hotkey.lock().unwrap(); *guard = main_hotkey.clone(); }
     { let mut guard = settings_state.sequential_paste_hotkey.lock().unwrap(); *guard = seq_hotkey.clone(); }

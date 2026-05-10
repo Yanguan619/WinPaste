@@ -152,6 +152,14 @@ fn apply_startup_resets(repo: &impl SettingsRepository) {
         info!(">>> [STARTUP] Game Mode active without Admin privileges. Resetting to default.");
         let _ = repo.set("app.paste_method", "shift_insert");
     }
+    
+    // Clear default Alt+F search hotkey to avoid conflicts for existing users
+    if let Ok(Some(search_hotkey)) = repo.get("app.search_hotkey") {
+        if search_hotkey == "Alt+F" {
+            info!(">>> [STARTUP] Clearing default Alt+F search hotkey to prevent conflicts.");
+            let _ = repo.set("app.search_hotkey", "");
+        }
+    }
 }
 
 pub struct StartupSettings {
@@ -195,7 +203,7 @@ fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
         sequential_mode: repo.get("app.sequential_mode").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         sequential_hotkey: repo.get("app.sequential_hotkey").unwrap_or(Some("Alt+V".to_string())).unwrap_or("Alt+V".to_string()),
         rich_paste_hotkey: repo.get("app.rich_paste_hotkey").unwrap_or(Some("Ctrl+Shift+Z".to_string())).unwrap_or("Ctrl+Shift+Z".to_string()),
-        search_hotkey: repo.get("app.search_hotkey").unwrap_or(Some("Alt+F".to_string())).unwrap_or("Alt+F".to_string()),
+        search_hotkey: repo.get("app.search_hotkey").unwrap_or(Some("".to_string())).unwrap_or("".to_string()),
         sound_enabled: repo.get("app.sound_enabled").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         hide_tray_icon: repo.get("app.hide_tray_icon").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         edge_docking: repo.get("app.edge_docking").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),

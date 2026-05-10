@@ -265,7 +265,14 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                             monitor_state.last_text = content.clone();
                             
                             let settings = app.state::<SettingsState>();
-                            if should_capture_file_entries(settings.capture_files.load(Ordering::Relaxed)) {
+                            let mut should_process = false;
+                            if files.len() == 1 {
+                                let lower = files[0].to_lowercase();
+                                if lower.ends_with(".gif") || lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".bmp") || lower.ends_with(".webp") {
+                                    should_process = true;
+                                }
+                            }
+                            if should_process || should_capture_file_entries(settings.capture_files.load(Ordering::Relaxed)) {
                                 process_new_entry(&app, ClipboardData::Files(files), None, Some(source_snapshot.clone()));
                             }
                         }

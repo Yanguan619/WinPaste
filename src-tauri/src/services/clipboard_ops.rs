@@ -327,17 +327,53 @@ async fn copy_content_to_system_clipboard(
 
             if !content.starts_with("data:") && (content.starts_with('/') || content.contains(":\\"))
             {
-                if content_type == "image" {
-                    // For image type with local path, read pixels for better compatibility with chat apps
-                    let bytes = std::fs::read(content).map_err(AppError::from)?;
-                    let (primary_hash, _secondary_hash) = copy_image_bytes_to_clipboard(bytes, current_time)?;
-                    // Keep LAST_APP_SET_HASH as content_hash (path hash)
-                    // Store pixel/byte hash in HASH_ALT
-                    crate::LAST_APP_SET_HASH_ALT.store(primary_hash, Ordering::SeqCst);
+                // Check if file still exists
+                let first_file = content.lines().next().unwrap_or(content);
+                let clean_path = if first_file.starts_with("file://") {
+                    first_file.strip_prefix("file://").unwrap_or(first_file)
                 } else {
+                    first_file
+                };
+                if !std::path::Path::new(clean_path).exists() {
+                    return Err(AppError::IO("File not found".to_string()));
+                }
+
+                let mut fallback_to_file = true;
+                if content_type == "image" {
+                    // For image type with local path, check size
+                    if let Ok(metadata) = std::fs::metadata(clean_path) {
+                        // If file size <= 1MB, read pixels for better compatibility with chat apps
+                        if metadata.len() <= 1024 * 1024 {
+                            if let Ok(bytes) = std::fs::read(clean_path) {
+                                if let Ok((primary_hash, _secondary_hash)) = copy_image_bytes_to_clipboard(bytes, current_time) {
+                                    // Keep LAST_APP_SET_HASH as content_hash (path hash)
+                                    // Store pixel/byte hash in HASH_ALT
+                                    crate::LAST_APP_SET_HASH_ALT.store(primary_hash, Ordering::SeqCst);
+                                    fallback_to_file = false;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if fallback_to_file {
+                    let win_path = clean_path.replace("/", "\\");
+                    println!("[DEBUG] copy_to_clipboard: fallback_to_file for >1MB image. win_path={}", win_path);
+                    
+                    // We must hash the EXACT string that the monitor will see!
+                    // The monitor will read the backslash path from CF_HDROP.
+                    let mut hasher = DefaultHasher::new();
+                    win_path.hash(&mut hasher);
+                    let hdrop_hash = hasher.finish();
+                    crate::LAST_APP_SET_HASH.store(hdrop_hash, Ordering::SeqCst);
+                    println!("[DEBUG] copy_to_clipboard: SETTING LAST_APP_SET_HASH to {} for path {}", hdrop_hash, win_path);
+
                     unsafe {
-                        crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(vec![content.to_string()])
-                            .map_err(AppError::from)?;
+                        crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(vec![win_path])
+                            .map_err(|e| {
+                                println!("[ERROR] set_clipboard_files failed: {}", e);
+                                AppError::from(e)
+                            })?;
                     }
                 }
             } else if content_type == "image" {

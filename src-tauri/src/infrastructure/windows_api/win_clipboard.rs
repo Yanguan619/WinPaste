@@ -422,15 +422,12 @@ pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
 
     // Prepare payload (Double null terminated list of wide strings)
     let mut buffer: Vec<u16> = Vec::new();
-    for path in paths {
+    for path in &paths {
         buffer.extend(path.encode_utf16());
         buffer.push(0);
     }
     buffer.push(0); // Double null terminator
 
-    // Calculate size needed
-    // DROPFILES struct size + buffer size in bytes
-    // pFiles(4) + pt.x(4) + pt.y(4) + fNC(4) + fWide(4) = 20 bytes
     let dropfiles_size = 20;
     let buffer_size = buffer.len() * 2;
     let total_size = dropfiles_size + buffer_size;
@@ -444,16 +441,12 @@ pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
     }
 
     // Write DROPFILES struct
-    // Offset 0: pFiles = 20 (size of struct)
     *(p_mem as *mut u32) = 20;
-
-    // Offset 16: fWide = 1
     *(p_mem.add(16) as *mut i32) = 1;
 
     // Write file paths
     let p_files = p_mem.add(20) as *mut u16;
     std::ptr::copy_nonoverlapping(buffer.as_ptr(), p_files, buffer.len());
-
     let _ = GlobalUnlock(h_global);
 
     let _ = EmptyClipboard();
@@ -464,7 +457,48 @@ pub unsafe fn set_clipboard_files(paths: Vec<String>) -> Result<(), String> {
     .is_err()
     {
         let _ = CloseClipboard();
-        return Err("SetClipboardData failed".into());
+        return Err("SetClipboardData CF_HDROP failed".into());
+    }
+
+    // ALSO set FileNameW and FileName to simulate native Explorer copy behavior!
+    let first_path = paths.first().cloned().unwrap_or_default();
+    if !first_path.is_empty() {
+        use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
+        
+        let format_w = "FileNameW";
+        let name_w: Vec<u16> = format_w.encode_utf16().chain(std::iter::once(0)).collect();
+        let id_w = RegisterClipboardFormatW(windows::core::PCWSTR(name_w.as_ptr()));
+        
+        let format_a = "FileName";
+        let name_a: Vec<u16> = format_a.encode_utf16().chain(std::iter::once(0)).collect();
+        let id_a = RegisterClipboardFormatW(windows::core::PCWSTR(name_a.as_ptr()));
+
+        if id_w != 0 {
+            let mut text_buffer: Vec<u16> = first_path.encode_utf16().collect();
+            text_buffer.push(0);
+            let text_size = text_buffer.len() * 2;
+            if let Ok(h_text) = GlobalAlloc(GHND, text_size) {
+                let p_text = GlobalLock(h_text);
+                if !p_text.is_null() {
+                    std::ptr::copy_nonoverlapping(text_buffer.as_ptr() as *const u8, p_text as *mut u8, text_size);
+                    let _ = GlobalUnlock(h_text);
+                    let _ = SetClipboardData(id_w, Some(windows::Win32::Foundation::HANDLE(h_text.0 as _)));
+                }
+            }
+        }
+        
+        if id_a != 0 {
+            let mut ascii_buffer: Vec<u8> = first_path.as_bytes().to_vec();
+            ascii_buffer.push(0);
+            if let Ok(h_text) = GlobalAlloc(GHND, ascii_buffer.len()) {
+                let p_text = GlobalLock(h_text);
+                if !p_text.is_null() {
+                    std::ptr::copy_nonoverlapping(ascii_buffer.as_ptr(), p_text as *mut u8, ascii_buffer.len());
+                    let _ = GlobalUnlock(h_text);
+                    let _ = SetClipboardData(id_a, Some(windows::Win32::Foundation::HANDLE(h_text.0 as _)));
+                }
+            }
+        }
     }
 
     let _ = CloseClipboard();

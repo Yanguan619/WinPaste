@@ -21,3 +21,5 @@ target-codex-*/
 .DS_Store
 Thumbs.db
 .vscode/
+
+TODO.md

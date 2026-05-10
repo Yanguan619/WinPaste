@@ -25,7 +25,11 @@ export const useClipboardActions = ({
   virtualListRef
 }: UseClipboardActionsOptions) => {
   const copyToClipboard = useCallback(
-    async (id: number, content: string, contentType: string, pasteWithFormat = false) => {
+    async (id: number, content: string, contentType: string, pasteWithFormat = false, isExternal?: boolean, filePreviewExists?: boolean) => {
+      if (isExternal && filePreviewExists === false) {
+          pushToast(contentType === "image" ? t("image_deleted") : t("file_deleted"), 3000);
+          return;
+      }
       try {
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
@@ -52,8 +56,14 @@ export const useClipboardActions = ({
 
         setSearch("");
       } catch (err) {
-        const errorMsg = t("copy_failed") + (err?.toString() || "");
-        pushToast(errorMsg, 3000);
+        const errStr = err?.toString() || "";
+        if (errStr.includes("File not found") || errStr.includes("os error 2") || errStr.includes("系统找不到指定的文件") || errStr.includes("The system cannot find the file specified")) {
+            pushToast(contentType === "image" ? t("image_deleted") : t("file_deleted"), 3000);
+            setHistory(prev => prev.map(i => i.id === id ? { ...i, file_preview_exists: false } : i));
+        } else {
+            const errorMsg = t("copy_failed") + errStr;
+            pushToast(errorMsg, 3000);
+        }
       }
     },
     [deleteAfterPaste, moveToTopAfterPaste, pushToast, setHistory, setSearch, t]
@@ -61,18 +71,29 @@ export const useClipboardActions = ({
 
   const openContent = useCallback(
     async (item: ClipboardEntry) => {
+      if (item.is_external && item.file_preview_exists === false) {
+          pushToast(item.content_type === "image" ? t("image_deleted") : t("file_deleted"), 3000);
+          return;
+      }
       try {
         await invoke("open_content", {
           id: item.id,
           content: item.content,
           contentType: item.content_type
         });
+        invoke("hide_window_cmd").catch(console.error);
       } catch (err) {
-        const errorMsg = t("open_failed") + (err?.toString() || "");
-        pushToast(errorMsg, 3000);
+        const errStr = err?.toString() || "";
+        if (errStr.includes("File not found") || errStr.includes("os error 2") || errStr.includes("系统找不到指定的文件") || errStr.includes("The system cannot find the file specified")) {
+            pushToast(item.content_type === "image" ? t("image_deleted") : t("file_deleted"), 3000);
+            setHistory(prev => prev.map(i => i.id === item.id ? { ...i, file_preview_exists: false } : i));
+        } else {
+            const errorMsg = t("open_failed") + errStr;
+            pushToast(errorMsg, 3000);
+        }
       }
     },
-    [pushToast, t]
+    [pushToast, t, setHistory]
   );
 
   const deleteEntry = useCallback(

@@ -142,7 +142,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   hotkey: "Alt+C",
   sequentialHotkey: "Alt+V",
   richPasteHotkey: "Ctrl+Shift+Z",
-  searchHotkey: "Alt+F",
+  searchHotkey: "",
   dataPath: "",
   installedApps: [],
   defaultApps: {},

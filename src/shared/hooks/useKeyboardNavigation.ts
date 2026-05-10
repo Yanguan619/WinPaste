@@ -19,8 +19,11 @@ interface UseKeyboardNavigationOptions {
     id: number,
     content: string,
     contentType: string,
-    pasteWithFormat?: boolean
+    pasteWithFormat?: boolean,
+    isExternal?: boolean,
+    filePreviewExists?: boolean
   ) => Promise<void>;
+  openContent: (item: ClipboardEntry) => void;
   setSearch: Dispatch<SetStateAction<string>>;
   setShowSearchBox: (show: boolean) => void;
 }
@@ -37,6 +40,7 @@ export const useKeyboardNavigation = ({
   arrowKeySelection,
   searchInputRef,
   copyToClipboard,
+  openContent,
   setSearch,
   setShowSearchBox
 }: UseKeyboardNavigationOptions) => {
@@ -94,7 +98,7 @@ export const useKeyboardNavigation = ({
       if (action === "enter") {
         const item = historyRef.current[selectedIndexRef.current];
         if (item) {
-          copyToClipboard(item.id, item.content, item.content_type, false);
+          copyToClipboard(item.id, item.content, item.content_type, false, item.is_external, item.file_preview_exists);
         }
         return;
       }
@@ -230,7 +234,11 @@ export const useKeyboardNavigation = ({
         
         const item = historyRef.current[selectedIndexRef.current];
         if (item) {
-          copyToClipboard(item.id, item.content, item.content_type, false);
+          if (item.is_external && item.file_preview_exists === false) {
+             openContent(item); // This will trigger the error toast
+             return;
+          }
+          copyToClipboard(item.id, item.content, item.content_type, false, item.is_external, item.file_preview_exists);
         }
         return;
       }
@@ -256,6 +264,7 @@ export const useKeyboardNavigation = ({
     setIsKeyboardMode,
     setSelectedIndex,
     copyToClipboard,
+    openContent,
     searchInputRef,
     showSettings,
     showTagManager,

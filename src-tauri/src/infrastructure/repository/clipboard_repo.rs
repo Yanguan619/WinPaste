@@ -605,7 +605,6 @@ impl SqliteClipboardRepository {
             Ok(Some(ClipboardEntry {
                 id: row.get(0).map_err(|e| e.to_string())?,
                 content_type: row.get(1).map_err(|e| e.to_string())?,
-                content,
                 html_content,
                 source_app: row.get(4).map_err(|e| e.to_string())?,
                 timestamp: row.get(5).map_err(|e| e.to_string())?,
@@ -616,7 +615,21 @@ impl SqliteClipboardRepository {
                 is_external: row.get::<_, i32>(10).unwrap_or(0) == 1,
                 pinned_order: row.get(11).unwrap_or(0),
                 source_app_path: row.get(12).unwrap_or(None),
-                file_preview_exists: true,
+                file_preview_exists: {
+                    let is_ext = row.get::<_, i32>(10).unwrap_or(0) == 1;
+                    if is_ext {
+                        let first_file = content.lines().next().unwrap_or(&content);
+                        let clean_path = if first_file.starts_with("file://") {
+                            first_file.strip_prefix("file://").unwrap_or(first_file)
+                        } else {
+                            first_file
+                        };
+                        std::path::Path::new(clean_path).exists()
+                    } else {
+                        true
+                    }
+                },
+                content,
             }))
         } else {
             Ok(None)
@@ -752,7 +765,13 @@ impl ClipboardRepository for SqliteClipboardRepository {
                         let is_ext = row.get::<_, i32>(10)? == 1;
                         if is_ext {
                             let c: String = self.maybe_decrypt_text(&row.get::<_, String>(2)?);
-                            std::path::Path::new(&c).exists()
+                            let first_file = c.lines().next().unwrap_or(&c);
+                            let clean_path = if first_file.starts_with("file://") {
+                                first_file.strip_prefix("file://").unwrap_or(first_file)
+                            } else {
+                                first_file
+                            };
+                            std::path::Path::new(clean_path).exists()
                         } else {
                             true
                         }
@@ -858,7 +877,21 @@ impl ClipboardRepository for SqliteClipboardRepository {
                     is_external: row.get::<_, i32>(10)? == 1,
                     pinned_order: row.get(11).unwrap_or(0),
                     source_app_path: row.get(12).unwrap_or(None),
-                    file_preview_exists: true // Simplified for search
+                    file_preview_exists: {
+                        let is_ext = row.get::<_, i32>(10)? == 1;
+                        if is_ext {
+                            let c: String = row.get(2)?;
+                            let first_file = c.lines().next().unwrap_or(&c);
+                            let clean_path = if first_file.starts_with("file://") {
+                                first_file.strip_prefix("file://").unwrap_or(first_file)
+                            } else {
+                                first_file
+                            };
+                            std::path::Path::new(clean_path).exists()
+                        } else {
+                            true
+                        }
+                    }
                  })
             }).map_err(|e| e.to_string())?;
 
@@ -917,7 +950,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                 Ok(ClipboardEntry {
                     id: row.get(0)?,
                     content_type: row.get(1)?,
-                    content,
+                    content: content.clone(),
                     html_content,
                     source_app: row.get(4)?,
                     timestamp: row.get(5)?,
@@ -928,7 +961,20 @@ impl ClipboardRepository for SqliteClipboardRepository {
                     is_external: row.get::<_, i32>(10)? == 1,
                     pinned_order: row.get(11).unwrap_or(0),
                     source_app_path: row.get(12).unwrap_or(None),
-                    file_preview_exists: true,
+                    file_preview_exists: {
+                        let is_ext = row.get::<_, i32>(10)? == 1;
+                        if is_ext {
+                            let first_file = content.lines().next().unwrap_or(&content);
+                            let clean_path = if first_file.starts_with("file://") {
+                                first_file.strip_prefix("file://").unwrap_or(first_file)
+                            } else {
+                                first_file
+                            };
+                            std::path::Path::new(clean_path).exists()
+                        } else {
+                            true
+                        }
+                    },
                 })
             }).map_err(|e| e.to_string())?;
 
@@ -985,7 +1031,7 @@ impl ClipboardRepository for SqliteClipboardRepository {
                                 is_external: row.get::<_, i32>(10)? == 1,
                                 pinned_order: row.get(11).unwrap_or(0),
                                 source_app_path: row.get(12).unwrap_or(None),
-                                file_preview_exists: true,
+                                file_preview_exists: true, // Will be updated after decryption
                             })
                         },
                     ).map_err(|e| e.to_string())?;
@@ -997,6 +1043,15 @@ impl ClipboardRepository for SqliteClipboardRepository {
                             entry.preview = self.maybe_decrypt_text(&entry.preview);
                             if let Some(html) = entry.html_content.take() {
                                 entry.html_content = Some(self.maybe_decrypt_text(&html));
+                            }
+                            if entry.is_external {
+                                let first_file = entry.content.lines().next().unwrap_or(&entry.content);
+                                let clean_path = if first_file.starts_with("file://") {
+                                    first_file.strip_prefix("file://").unwrap_or(first_file)
+                                } else {
+                                    first_file
+                                };
+                                entry.file_preview_exists = std::path::Path::new(clean_path).exists();
                             }
                             batch.push(entry);
                         }

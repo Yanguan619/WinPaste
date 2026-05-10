@@ -460,7 +460,7 @@ const ClipboardItem = ({
     useEffect(() => { return () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void hideCompactPreviewGlobal(); }; }, []);
 
     const renderFilePreview = () => {
-        if (item.file_preview_exists === false) return <div className="file-thumbnail-card error-bg" title={t('file_deleted')}><div className="file-icon-wrapper error-icon"><FileQuestion size={24} /></div><div className="file-info-wrapper"><div className="file-name error-text">{t('file_deleted')}</div><div className="file-hint error-text">{item.content}</div></div></div>;
+        if (item.file_preview_exists === false) return <div className="file-thumbnail-card error-bg" title={t('file_deleted')}><div className="file-icon-wrapper error-icon"><FileQuestion size={24} /></div><div className="file-info-wrapper"><div className="file-name error-text">{t('file_deleted')}</div><div className="file-hint error-text">{filePaths.length > 1 ? item.content : filePaths[0].split(/[\\/]/).pop()}</div></div></div>;
         if (filePaths.length > 1) return <div className="file-thumbnail-card" title={item.content}><div className="file-icon-wrapper"><Files size={24} /></div><div className="file-info-wrapper"><div className="file-name">{filePaths.length} {t('items')}</div><div className="file-hint">{filePaths[0].split(/[\\/]/).pop()} ...</div></div></div>;
         const filePath = filePaths[0];
         return <div className="file-thumbnail-card" title={item.content}><div className={`file-icon-wrapper ${fileIcon ? 'file-icon-wrapper-system' : ''}`}>{fileIcon ? <img src={fileIcon} alt="" className="file-icon-image" /> : getFallbackFileIcon(filePath)}</div><div className="file-info-wrapper"><div className="file-name">{filePath.split(/[\\/]/).pop()}</div><div className="file-hint">{filePath.split(/[\\/]/).slice(0, -1).join('\\')}</div></div></div>;
@@ -476,8 +476,8 @@ const ClipboardItem = ({
                     e.preventDefault();
                 }
             }}
-            onClick={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; void hideCompactPreviewGlobal(); onCopy(false); onSelect(); }}
-            onContextMenu={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; void hideCompactPreviewGlobal(); e.preventDefault(); onCopy(true); onSelect(); }}
+            onClick={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); onCopy(false); onSelect(); }}
+            onContextMenu={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); e.preventDefault(); onCopy(true); onSelect(); }}
             onMouseEnter={(e) => { if (!canShowCompactPreview) return; hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 1000); }}
             onMouseMove={(e) => { if (canShowCompactPreview) hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; }}
             onMouseLeave={() => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void hideCompactPreviewGlobal(); }}
@@ -495,7 +495,7 @@ const ClipboardItem = ({
             <div className={`content-preview ${item.content_type === 'rich_text' ? 'rich-text' : ''} ${item.content_type === 'file' ? 'file-preview' : ''} ${isSensitiveHidden ? 'sensitive-blur' : ''}`}>
                 {item.content_type === "image" ? (
                     <div style={{ position: 'relative' }}>
-                        {item.is_external && item.file_preview_exists === false ? <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}><ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} /><span>{t('image_deleted')}</span></div> : <img src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || convertFileSrc(item.content))} alt={t('image_preview')} className="image-preview" style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('image-load-error'); }} />}
+                        {item.is_external && item.file_preview_exists === false ? <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}><ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} /><span style={{ marginBottom: '8px' }}>{t('image_deleted')}</span><span style={{ fontSize: '10px', opacity: 0.7, maxWidth: '80%', wordBreak: 'break-all', textAlign: 'center' }}>{item.content.split(/[\\/]/).pop()}</span></div> : <img src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || convertFileSrc(item.content))} alt={t('image_preview')} className="image-preview" style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('image-load-error'); }} />}
                         {isSensitiveHidden && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontWeight: 'bold', opacity: 0.5, fontSize: '10px' }}>SENSITIVE</div>}
                     </div>
                 ) : item.content_type === "video" ? (
@@ -582,7 +582,7 @@ const ClipboardItem = ({
                 <div className="item-actions">
                     {isSensitiveHidden && <button className={`btn-icon ${isRevealed ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); onToggleReveal(e); }} title={t('reveal')}><Eye size={12} /></button>}
                     {!isSensitiveHidden && (item.tags?.includes('sensitive') || item.tags?.includes('密码')) && <button className={`btn-icon active`} onClick={(e) => { e.stopPropagation(); onToggleReveal(e); }} title={t('hide')}><EyeOff size={12} /></button>}
-                    <button className="btn-icon" onClick={(e) => { e.stopPropagation(); onOpen(e); }} title={t('open')}><ExternalLink size={12} /></button>
+                    <button className={`btn-icon ${item.is_external && item.file_preview_exists === false ? 'disabled' : ''}`} onClick={(e) => { e.stopPropagation(); if (item.is_external && item.file_preview_exists === false) { onOpen(e); return; } onOpen(e); }} title={t('open')}><ExternalLink size={12} /></button>
                     <button className={`btn-icon ${item.is_pinned ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); onTogglePin(e); }} title={item.is_pinned ? t('unpin') : t('pin')}>{item.is_pinned ? <PinOff size={12} /> : <Pin size={12} />}</button>
                     <button className={`btn-icon ${isEditingTags ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); onToggleTagEditor(e); }} title="Tags"><Tag size={12} /></button>
                     <button className="btn-icon" onClick={(e) => { e.stopPropagation(); onDelete(e); }} title={t('delete')}><X size={12} /></button>
@@ -593,5 +593,5 @@ const ClipboardItem = ({
 };
 
 export default memo(ClipboardItem, (prev, next) => {
-    return prev.index === next.index && prev.item.id === next.item.id && prev.item.timestamp === next.item.timestamp && prev.item.content === next.item.content && prev.item.is_pinned === next.item.is_pinned && prev.item.tags === next.item.tags;
+    return prev.index === next.index && prev.item.id === next.item.id && prev.item.timestamp === next.item.timestamp && prev.item.content === next.item.content && prev.item.is_pinned === next.item.is_pinned && prev.item.tags === next.item.tags && prev.item.file_preview_exists === next.item.file_preview_exists;
 });

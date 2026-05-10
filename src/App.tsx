@@ -45,6 +45,22 @@ import type { VirtualClipboardListHandle } from "./features/clipboard/types";
 
 const insertHistoryItem = (list: ClipboardEntry[], item: ClipboardEntry) => {
   const next = list.slice();
+
+  // Try to replace if it exists
+  const existingIndex = next.findIndex(i => i.id === item.id);
+  if (existingIndex >= 0) {
+      next[existingIndex] = item;
+      return next.sort((a, b) => {
+          if (a.is_pinned === b.is_pinned) {
+            if (a.is_pinned) {
+              return (b.pinned_order || 0) - (a.pinned_order || 0);
+            }
+            return b.timestamp - a.timestamp;
+          }
+          return a.is_pinned ? -1 : 1;
+      });
+  }
+
   const isPinned = !!item.is_pinned;
   let insertIndex = 0;
 
@@ -331,8 +347,10 @@ const App = () => {
   useClipboardEvents({
     onUpdated: (updatedItem) => {
       setHistory((prev: ClipboardEntry[]) => {
-        const withoutItem = prev.filter(item => item.id !== updatedItem.id);
-        return insertHistoryItem(withoutItem, updatedItem);
+        const processedItem = { ...updatedItem };
+        // Do not copy old file_preview_exists state, as it may be stale.
+        // Rely on the backend's updated status which we now send correctly.
+        return insertHistoryItem(prev, processedItem);
       });
     },
     onRemoved: (id) => {
@@ -494,6 +512,7 @@ const App = () => {
     arrowKeySelection,
     searchInputRef,
     copyToClipboard,
+    openContent,
     setSearch: setSearch as any,
     setShowSearchBox
   });
