@@ -6645,7 +6645,7 @@ dependencies = [
 
 [[package]]
 name = "winpaste-app"
-version = "1.0.9"
+version = "1.5.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
