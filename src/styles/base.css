@@ -202,11 +202,11 @@
     box-sizing: border-box;
 }
 
-body {
+html, body {
     margin: 0;
     padding: 0;
     color: var(--text-primary);
-    background: transparent;
+    background: transparent !important;
     user-select: none;
     overflow: hidden;
 }
@@ -220,7 +220,7 @@ body {
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--bg-body);
+    background: transparent;
     color: var(--text-primary);
     border: var(--shell-border);
     border-radius: 0; 
@@ -229,14 +229,14 @@ body {
 }
 
 .light-mode .app-container {
-    background: #f3f3f3;
+    background: transparent;
     background-image: none;
     border: var(--shell-border);
     box-shadow: var(--shell-shadow);
 }
 
 .dark-mode .app-container {
-    background: rgba(25, 25, 25, 0.05);
+    background: transparent;
 }
 
 .windows-11 .app-container {

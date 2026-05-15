@@ -143,8 +143,9 @@ pub fn toggle_window(app: &AppHandle) {
                         }
                     }
                     
-                    let mut target_x = point.x.saturating_sub(w / 2);
-                    let mut target_y = point.y.saturating_add(12);
+                    // 初始位置，随后在 monitor 块中进行智能避让计算
+                    let mut target_x = point.x;
+                    let mut target_y = point.y;
 
                     let mut target_monitor: Option<tauri::Monitor> = None;
                     if let Ok(monitors) = window.available_monitors() {
@@ -172,19 +173,95 @@ pub fn toggle_window(app: &AppHandle) {
                         let my = m_pos.y;
                         let mw = m_size.width as i32;
                         let mh = m_size.height as i32;
-                        if target_x < mx { target_x = mx + 5; }
-                        if target_x.saturating_add(w) > mx.saturating_add(mw) { target_x = mx.saturating_add(mw).saturating_sub(w).saturating_sub(5); }
-                        if target_y.saturating_add(h) > my.saturating_add(mh) {
-                            let above_y = if follow_caret && got_caret {
-                                caret_top.saturating_sub(h).saturating_sub(12)
-                            } else {
-                                point.y.saturating_sub(h).saturating_sub(12)
-                            };
-                            
-                            if above_y >= my { target_y = above_y; }
-                            else { target_y = my.saturating_add(mh).saturating_sub(h).saturating_sub(5); }
+
+                        // --- 最佳实践定位算法 (Best Practice Implementation) ---
+                        // 1. 定义参考点与安全区
+                        let gap = 24; // 避让间距
+                        let cx = point.x;
+                        let c_top = if follow_caret && got_caret { caret_top } else { point.y };
+                        let c_bottom = point.y;
+
+                        let safe_left = cx - gap;
+                        let safe_right = cx + gap;
+                        let safe_top = c_top - gap;
+                        let safe_bottom = c_bottom + gap;
+
+                        // 2. 空间检测 (Current Monitor)
+                        let space_right = (mx + mw) - safe_right;
+                        let space_left = safe_left - mx;
+                        let space_bottom = (my + mh) - safe_bottom;
+                        let space_top = safe_top - my;
+
+                        // 3. 方向选择 & 4. 坐标计算与修正
+                        // 水平方向优先选择空间充裕的一侧
+                        if space_right >= space_left {
+                            // 选右侧
+                            target_x = safe_right;
+                            // 极端情况处理：如果右侧放不下，且左侧能放下，翻转；否则保持右侧
+                            if target_x + w > mx + mw && space_left >= w {
+                                target_x = safe_left - w;
+                            }
+                        } else {
+                            // 选左侧
+                            target_x = safe_left - w;
+                            // 极端情况处理
+                            if target_x < mx && space_right >= w {
+                                target_x = safe_right;
+                            }
                         }
-                        if target_y < my { target_y = my + 5; }
+
+                        // 垂直方向适配
+                        if space_bottom >= space_top {
+                            // 选下方
+                            target_y = safe_bottom;
+                            // 修正
+                            if target_y + h > my + mh && space_top >= h {
+                                target_y = safe_top - h;
+                            }
+                        } else {
+                            // 选上方
+                            target_y = safe_top - h;
+                            // 修正
+                            if target_y < my && space_bottom >= h {
+                                target_y = safe_bottom;
+                            }
+                        }
+
+                        // 5. 最终位置检查与智能 Clamp，确保无论如何调整都不会覆盖安全区
+                        if w > mw {
+                            target_x = mx; // 屏幕太小，强制左对齐
+                            // 如果还是遮挡了安全区
+                            if target_x + w > safe_left && target_x < safe_right {
+                                target_x = safe_right; // 强制向右推，允许超出屏幕，不遮挡
+                            }
+                        } else {
+                            target_x = target_x.clamp(mx, mx + mw - w);
+                            // 再次检查安全区冲突 (仅在垂直范围也重叠时)
+                            let y_overlaps = target_y < safe_bottom && target_y + h > safe_top;
+                            if y_overlaps && target_x < safe_right && target_x + w > safe_left {
+                                // 发生重叠，向空间大的方向推
+                                if space_right >= space_left {
+                                    target_x = safe_right;
+                                } else {
+                                    target_x = safe_left - w;
+                                }
+                            }
+                        }
+
+                        // Y 轴 Clamp 类似
+                        if h > mh {
+                            target_y = my;
+                        } else {
+                            target_y = target_y.clamp(my, my + mh - h);
+                            let x_overlaps = target_x < safe_right && target_x + w > safe_left;
+                            if x_overlaps && target_y < safe_bottom && target_y + h > safe_top {
+                                if space_bottom >= space_top {
+                                    target_y = safe_bottom;
+                                } else {
+                                    target_y = safe_top - h;
+                                }
+                            }
+                        }
                     }
 
                     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: target_x, y: target_y }));

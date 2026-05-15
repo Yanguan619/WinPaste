@@ -64,7 +64,7 @@ pub fn set_theme(
     state: State<'_, SettingsState>,
     db_state: State<'_, DbState>,
     _theme: String,
-    _color_mode: Option<String>,
+    color_mode: Option<String>,
     show_app_border: Option<bool>,
     vibrancy_enabled: Option<bool>,
 ) -> AppResult<()> {
@@ -95,6 +95,19 @@ pub fn set_theme(
     use windows::Win32::Foundation::HWND;
 
     #[cfg(target_os = "windows")]
+    fn is_system_dark_mode() -> bool {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(key) = hkcu.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize") {
+            if let Ok(val) = key.get_value::<u32, _>("AppsUseLightTheme") {
+                return val == 0;
+            }
+        }
+        true
+    }
+
+    #[cfg(target_os = "windows")]
     {
         let hwnd = window.hwnd().map_err(|e| AppError::Internal(e.to_string()))?;
         let hwnd = HWND(hwnd.0 as _);
@@ -103,8 +116,11 @@ pub fn set_theme(
             let _ = window_vibrancy::clear_vibrancy(&window);
         }
 
-        // Hardcode dark mode for fluent theme
-        let is_dark = true;
+        let is_dark = match color_mode.as_deref() {
+            Some("dark") => true,
+            Some("light") => false,
+            _ => is_system_dark_mode(),
+        };
 
         let dark_mode = BOOL::from(is_dark);
         unsafe {
@@ -133,7 +149,21 @@ pub fn set_theme(
             let is_win10_1803 = build >= 17134;
 
             if is_win11 {
+                // We use standard apply_mica from window-vibrancy crate.
+                // It is the most reliable way to set up the window for Mica.
                 let _ = window_vibrancy::apply_mica(&window, Some(is_dark));
+
+                // We override with Mica Alt (Backdrop Type 3) as originally requested,
+                // but we keep a reasonable CSS opacity to avoid the "all white/too transparent" look.
+                let backdrop_type: u32 = 3;
+                unsafe {
+                    let _ = DwmSetWindowAttribute(
+                        hwnd,
+                        windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(38),
+                        &backdrop_type as *const _ as _,
+                        4,
+                    );
+                }
             } else if is_win10_1803 {
                 let _ = window_vibrancy::apply_blur(&window, Some((20, 20, 20, 200)));
             }
