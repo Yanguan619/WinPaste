@@ -27,6 +27,7 @@ export const useSettingsPostInit = ({
     setPrivacyProtectionCustomRules,
     setSilentStart,
     setFollowMouse,
+    setFollowCaret,
     setShowAppBorder,
     setShowSourceAppIcon,
     setDeleteAfterPaste,
@@ -40,6 +41,7 @@ export const useSettingsPostInit = ({
     setRichPasteHotkey,
     setSearchHotkey,
     setSequentialModeState,
+    setQuickPasteEnabled,
     setSoundEnabled,
     setSoundVolume,
     setPasteSoundEnabled,
@@ -90,6 +92,7 @@ export const useSettingsPostInit = ({
     }
     if (settings["app.silent_start"] !== undefined) setSilentStart(settings["app.silent_start"] === 'true');
     if (settings["app.follow_mouse"] !== undefined) setFollowMouse(settings["app.follow_mouse"] === 'true');
+    if (settings["app.follow_caret"] !== undefined) setFollowCaret(settings["app.follow_caret"] === 'true');
     if (settings["app.show_app_border"] !== undefined) setShowAppBorder(settings["app.show_app_border"] === 'true');
     if (settings["app.show_source_app_icon"] !== undefined) setShowSourceAppIcon(settings["app.show_source_app_icon"] === 'true');
     if (settings["app.vibrancy_enabled"] !== undefined) setVibrancyEnabled(settings["app.vibrancy_enabled"] !== 'false');

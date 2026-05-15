@@ -20,6 +20,7 @@ interface SettingsState {
   hideTrayIcon: boolean;
   edgeDocking: boolean;
   followMouse: boolean;
+  followCaret: boolean;
   arrowKeySelection: boolean;
   soundEnabled: boolean;
   soundVolume: number;
@@ -74,6 +75,7 @@ interface SettingsState {
   setHideTrayIcon: (enabled: boolean) => void;
   setEdgeDocking: (enabled: boolean) => void;
   setFollowMouse: (enabled: boolean) => void;
+  setFollowCaret: (enabled: boolean) => void;
   setArrowKeySelection: (enabled: boolean) => void;
   setSoundEnabled: (enabled: boolean) => void;
   setSoundVolume: (volume: number) => void;
@@ -122,6 +124,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   hideTrayIcon: false,
   edgeDocking: false,
   followMouse: true,
+  followCaret: false,
   arrowKeySelection: true,
   soundEnabled: false,
   soundVolume: 70,
@@ -167,6 +170,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setHideTrayIcon: (hideTrayIcon) => set({ hideTrayIcon }),
   setEdgeDocking: (edgeDocking) => set({ edgeDocking }),
   setFollowMouse: (followMouse) => set({ followMouse }),
+  setFollowCaret: (followCaret) => set({ followCaret }),
   setArrowKeySelection: (arrowKeySelection) => set({ arrowKeySelection }),
   setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
   setSoundVolume: (soundVolume) => set({ soundVolume }),

@@ -111,6 +111,8 @@ export const useSettingsPanelProps = ({
     setEdgeDocking: state.setEdgeDocking,
     followMouse: state.followMouse,
     setFollowMouse: state.setFollowMouse,
+    followCaret: state.followCaret,
+    setFollowCaret: state.setFollowCaret,
     installedApps: state.installedApps,
     appSettings: state.appSettings || {},
     defaultApps: state.defaultApps,

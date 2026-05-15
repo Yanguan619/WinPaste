@@ -216,7 +216,7 @@ pub fn seed_defaults(conn: &Connection) -> Result<()> {
         [],
     );
     let _ = conn.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.arrow_key_selection', 'false')",
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.arrow_key_selection', 'true')",
         [],
     );
     let _ = conn.execute(

@@ -87,6 +87,7 @@ pub fn toggle_window(app: &AppHandle) {
             IS_HIDDEN.store(false, Ordering::Relaxed);
             NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
             NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
+            let _ = app.emit("window-hidden", ());
             return;
         }
 
@@ -118,7 +119,10 @@ pub fn toggle_window(app: &AppHandle) {
 
         if let Ok(size) = window.outer_size() {
             let settings = app.state::<SettingsState>();
-            if settings.follow_mouse.load(Ordering::Relaxed) {
+            let follow_mouse = settings.follow_mouse.load(Ordering::Relaxed);
+            let follow_caret = settings.follow_caret.load(Ordering::Relaxed);
+
+            if follow_mouse || follow_caret {
                 let w = size.width as i32;
                 let h = size.height as i32;
                 
@@ -126,8 +130,21 @@ pub fn toggle_window(app: &AppHandle) {
                 {
                     let mut point = POINT::default();
                     unsafe { let _ = GetCursorPos(&mut point); }
-                    let mut target_x = point.x - (w / 2);
-                    let mut target_y = point.y + 12;
+                    
+                    let mut caret_top = point.y;
+                    let mut got_caret = false;
+
+                    if follow_caret {
+                        if let Some((cx, c_bottom, c_top)) = WindowExt::get_caret_pos() {
+                            point.x = cx;
+                            point.y = c_bottom; 
+                            caret_top = c_top;
+                            got_caret = true;
+                        }
+                    }
+                    
+                    let mut target_x = point.x.saturating_sub(w / 2);
+                    let mut target_y = point.y.saturating_add(12);
 
                     let mut target_monitor: Option<tauri::Monitor> = None;
                     if let Ok(monitors) = window.available_monitors() {
@@ -156,11 +173,16 @@ pub fn toggle_window(app: &AppHandle) {
                         let mw = m_size.width as i32;
                         let mh = m_size.height as i32;
                         if target_x < mx { target_x = mx + 5; }
-                        if target_x + w > mx + mw { target_x = mx + mw - w - 5; }
-                        if target_y + h > my + mh {
-                            let above_y = point.y - h - 12;
+                        if target_x.saturating_add(w) > mx.saturating_add(mw) { target_x = mx.saturating_add(mw).saturating_sub(w).saturating_sub(5); }
+                        if target_y.saturating_add(h) > my.saturating_add(mh) {
+                            let above_y = if follow_caret && got_caret {
+                                caret_top.saturating_sub(h).saturating_sub(12)
+                            } else {
+                                point.y.saturating_sub(h).saturating_sub(12)
+                            };
+                            
                             if above_y >= my { target_y = above_y; }
-                            else { target_y = my + mh - h - 5; }
+                            else { target_y = my.saturating_add(mh).saturating_sub(h).saturating_sub(5); }
                         }
                         if target_y < my { target_y = my + 5; }
                     }
@@ -290,8 +312,10 @@ pub fn toggle_window(app: &AppHandle) {
         LAST_SHOW_TIMESTAMP.store(now, Ordering::Relaxed);
 
         let pinned = WINDOW_PINNED.load(Ordering::Relaxed);
+        // 面板呼出时无论是否置顶，一律不抢占焦点，实现类似原生 Win+V 的行为
         let _ = window.set_always_on_top(pinned);
-        let _ = window.set_focusable(!pinned); // 如果不置顶，就允许聚焦
+        let _ = window.set_focusable(false);
+        crate::IS_MAIN_WINDOW_FOCUSED.store(false, Ordering::Relaxed);
         let _ = app.emit("window-pinned-changed", pinned);
 
         #[cfg(target_os = "windows")]
@@ -299,28 +323,19 @@ pub fn toggle_window(app: &AppHandle) {
             if let Ok(hwnd_raw) = window.hwnd() {
                 unsafe {
                     let ex_style = GetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE);
-                    if pinned {
-                        let _ = SetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as isize);
-                    } else {
-                        let _ = SetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE, ex_style & !(WS_EX_NOACTIVATE.0 as isize));
-                    }
+                    let _ = SetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as isize);
                 }
                 let _ = window.show();
                 let _ = app.emit("window-shown", ());
+                
                 if pinned {
                     WindowExt::show_window_no_activate(HWND(hwnd_raw.0));
                 } else {
-                    crate::IS_MAIN_WINDOW_FOCUSED.store(true, Ordering::Relaxed);
-                    let _ = window.set_focus();
-                    WindowExt::force_focus_window(HWND(hwnd_raw.0));
+                    WindowExt::show_window_no_activate_normal(HWND(hwnd_raw.0));
                 }
             } else {
                 let _ = window.show();
                 let _ = app.emit("window-shown", ());
-                if !pinned {
-                    crate::IS_MAIN_WINDOW_FOCUSED.store(true, Ordering::Relaxed);
-                    let _ = window.set_focus();
-                }
             }
         }
 
@@ -387,10 +402,12 @@ pub fn hide_window_cmd(app_handle: AppHandle) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         WindowExt::release_win_keys();
         let _ = window.set_focusable(false);
+        crate::IS_MAIN_WINDOW_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = window.hide();
         NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
         NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
         let _ = restore_last_focus(app_handle.clone());
+        let _ = app_handle.emit("window-hidden", ());
     }
     Ok(())
 }

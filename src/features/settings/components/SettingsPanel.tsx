@@ -78,6 +78,8 @@ export interface SettingsPanelProps {
     setEdgeDocking: (val: boolean) => void;
     followMouse: boolean;
     setFollowMouse: (val: boolean) => void;
+    followCaret: boolean;
+    setFollowCaret: (val: boolean) => void;
 
     installedApps: InstalledAppOption[];
     appSettings: Record<string, string>;
@@ -150,6 +152,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         hideTrayIcon, setHideTrayIcon,
         edgeDocking, setEdgeDocking,
         followMouse, setFollowMouse,
+        followCaret, setFollowCaret,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
         toggleGroup, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setAutoHideTags, setPinnedCollapsed, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
@@ -236,6 +239,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setEdgeDocking={setEdgeDocking}
                 followMouse={followMouse}
                 setFollowMouse={setFollowMouse}
+                followCaret={followCaret}
+                setFollowCaret={setFollowCaret}
                     soundEnabled={soundEnabled}
                     setSoundEnabled={setSoundEnabled}
                     soundVolume={soundVolume}

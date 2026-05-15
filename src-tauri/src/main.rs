@@ -86,6 +86,7 @@ fn main() {
             app::commands::set_tray_visible,
             app::commands::set_edge_docking,
             app::commands::set_follow_mouse,
+            app::commands::set_follow_caret,
 
             app::commands::get_data_path,
             app::commands::open_folder,

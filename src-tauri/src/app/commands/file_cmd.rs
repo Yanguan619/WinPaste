@@ -1,13 +1,7 @@
 use crate::error::{AppResult, AppError};
-use crate::app_state::AppDataDir;
-use base64::Engine;
-use image::ImageFormat;
-use reqwest::header;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
-use tauri::State;
+use std::path::Path;
 use serde::Serialize;
+use image::ImageFormat;
 
 #[derive(Serialize)]
 pub struct FileSize {

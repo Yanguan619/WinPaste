@@ -76,16 +76,30 @@ export const useKeyboardNavigation = ({
       }
 
       if (action === "up" || action === "down") {
+        const isArrowDown = action === "down";
+        
         if (!isKeyboardModeRef.current) {
           setIsKeyboardMode(true);
           isKeyboardModeRef.current = true;
-          const idx = action === "down" ? 0 : historyRef.current.length - 1;
-          setSelectedIndex(idx);
-          selectedIndexRef.current = idx;
+          
+          const currentIdx = selectedIndexRef.current;
+          const isValidIdx = currentIdx >= 0 && currentIdx < historyRef.current.length;
+          
+          let nextIdx = 0;
+          if (isValidIdx) {
+              nextIdx = isArrowDown
+                  ? Math.min(historyRef.current.length - 1, currentIdx + 1)
+                  : Math.max(0, currentIdx - 1);
+          } else {
+              nextIdx = isArrowDown ? 0 : historyRef.current.length - 1;
+          }
+          
+          setSelectedIndex(nextIdx);
+          selectedIndexRef.current = nextIdx;
           return;
         }
 
-        const dir = action === "down" ? 1 : -1;
+        const dir = isArrowDown ? 1 : -1;
         const nextIndex = Math.max(
           0,
           Math.min(historyRef.current.length - 1, selectedIndexRef.current + dir)
@@ -118,24 +132,51 @@ export const useKeyboardNavigation = ({
         return;
       }
 
+      if (action === "search-activate") {
+        setShowSearchBox(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+        return;
+      }
+
+      if (action.startsWith("search:")) {
+        // Fallback for any legacy search triggers if needed
+        const char = action.split(":")[1];
+        setShowSearchBox(true);
+        if (char === "backspace") {
+           setSearch(prev => prev.slice(0, -1));
+        } else if (char === "space") {
+           setSearch(prev => prev + " ");
+        } else {
+           setSearch(prev => prev + char);
+        }
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+        return;
+      }
+
       if (action === "escape") {
         invoke("hide_window_cmd").catch(console.error);
         return;
       }
     });
 
-    const unlistenBlur = listen("tauri://blur", () => {
+    const handleReset = () => {
       setIsKeyboardMode(false);
       isKeyboardModeRef.current = false;
       setSelectedIndex(0);
       selectedIndexRef.current = 0;
-    });
+      setShowSearchBox(false);
+      setSearch("");
+    };
+
+    const unlistenBlur = listen("tauri://blur", handleReset);
+    const unlistenHidden = listen("window-hidden", handleReset);
 
     return () => {
       unlistenNav.then(fn => fn()).catch(console.error);
       unlistenBlur.then(fn => fn()).catch(console.error);
+      unlistenHidden.then(fn => fn()).catch(console.error);
     };
-  }, [arrowKeySelection, setIsKeyboardMode, setSelectedIndex, copyToClipboard]);
+  }, [arrowKeySelection, setIsKeyboardMode, setSelectedIndex, copyToClipboard, setShowSearchBox, setSearch]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

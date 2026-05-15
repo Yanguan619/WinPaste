@@ -23,6 +23,8 @@ interface GeneralSettingsGroupProps {
     setEdgeDocking: (val: boolean) => void;
     followMouse: boolean;
     setFollowMouse: (val: boolean) => void;
+    followCaret: boolean;
+    setFollowCaret: (val: boolean) => void;
     soundEnabled: boolean;
     setSoundEnabled: (val: boolean) => void;
     soundVolume: number;
@@ -55,6 +57,8 @@ const GeneralSettingsGroup = ({
     setEdgeDocking,
     followMouse,
     setFollowMouse,
+    followCaret,
+    setFollowCaret,
     soundEnabled,
     setSoundEnabled,
     soundVolume,
@@ -133,23 +137,48 @@ const GeneralSettingsGroup = ({
                     </label>
                 </div>
 
-                <div className="setting-item">
-                    <div className="item-label-group">
-                        <span className="item-label">{t('follow_mouse')}</span>
+                <div className="setting-item column no-border">
+                    <div className="item-label-group" style={{ marginBottom: '8px' }}>
+                        <span className="item-label">{t('popup_position') || "Popup Position"}</span>
                     </div>
-                    <label className="switch">
-                        <input
-                            className="cb"
-                            type="checkbox"
-                            checked={followMouse}
-                            onChange={(e) => {
-                                const val = e.target.checked;
-                                setFollowMouse(val);
-                                invoke("set_follow_mouse", { enabled: val }).catch(console.error);
+                    <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                        <button
+                            onClick={() => {
+                                setFollowCaret(true);
+                                setFollowMouse(false);
+                                invoke("set_follow_caret", { enabled: true }).catch(console.error);
+                                invoke("set_follow_mouse", { enabled: false }).catch(console.error);
                             }}
-                        />
-                        <div className="toggle"><div className="left" /><div className="right" /></div>
-                    </label>
+                            className={`btn-icon ${followCaret ? 'active' : ''}`}
+                            style={{ flex: 1, height: '36px', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                            {t('follow_caret') || "Follow Caret"}
+                        </button>
+                        <button
+                            onClick={() => {
+                                setFollowCaret(false);
+                                setFollowMouse(true);
+                                invoke("set_follow_caret", { enabled: false }).catch(console.error);
+                                invoke("set_follow_mouse", { enabled: true }).catch(console.error);
+                            }}
+                            className={`btn-icon ${!followCaret && followMouse ? 'active' : ''}`}
+                            style={{ flex: 1, height: '36px', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                            {t('follow_mouse') || "Follow Mouse"}
+                        </button>
+                        <button
+                            onClick={() => {
+                                setFollowCaret(false);
+                                setFollowMouse(false);
+                                invoke("set_follow_caret", { enabled: false }).catch(console.error);
+                                invoke("set_follow_mouse", { enabled: false }).catch(console.error);
+                            }}
+                            className={`btn-icon ${!followCaret && !followMouse ? 'active' : ''}`}
+                            style={{ flex: 1, height: '36px', fontSize: '12px', fontWeight: 'bold' }}
+                        >
+                            {t('center_screen') || "Center Screen"}
+                        </button>
+                    </div>
                 </div>
 
                 <div className="setting-item">

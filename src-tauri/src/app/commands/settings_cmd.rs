@@ -225,6 +225,9 @@ pub fn save_setting(
         "app.follow_mouse" => {
             settings_state.follow_mouse.store(value != "false", Ordering::Relaxed);
         },
+        "app.follow_caret" => {
+            settings_state.follow_caret.store(value == "true", Ordering::Relaxed);
+        },
         "app.hide_tray_icon" => {
             settings_state.hide_tray_icon.store(value == "true", Ordering::Relaxed);
         },
@@ -455,4 +458,15 @@ pub fn set_follow_mouse(
     state.follow_mouse.store(enabled, Ordering::Relaxed);
     let db_state = app_handle.state::<DbState>();
     db_state.settings_repo.set("app.follow_mouse", &enabled.to_string()).map_err(AppError::from)
+}
+
+#[tauri::command]
+pub fn set_follow_caret(
+    app_handle: AppHandle,
+    state: State<'_, crate::app_state::SettingsState>,
+    enabled: bool,
+) -> AppResult<()> {
+    state.follow_caret.store(enabled, Ordering::Relaxed);
+    let db_state = app_handle.state::<DbState>();
+    db_state.settings_repo.set("app.follow_caret", &enabled.to_string()).map_err(AppError::from)
 }

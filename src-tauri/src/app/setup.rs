@@ -181,6 +181,7 @@ pub struct StartupSettings {
     pub hide_tray_icon: bool,
     pub edge_docking: bool,
     pub follow_mouse: bool,
+    pub follow_caret: bool,
     pub window_pinned: bool,
     pub window_width: Option<u32>,
     pub window_height: Option<u32>,
@@ -209,6 +210,7 @@ fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
         hide_tray_icon: repo.get("app.hide_tray_icon").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         edge_docking: repo.get("app.edge_docking").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         follow_mouse: repo.get("app.follow_mouse").unwrap_or(Some("true".to_string())).map(|v| v == "true").unwrap_or(true),
+        follow_caret: repo.get("app.follow_caret").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         window_pinned: repo.get("app.window_pinned").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         window_width: repo
             .get("app.window_width")
@@ -251,6 +253,7 @@ fn setup_state(app: &App, conn_arc: std::sync::Arc<std::sync::Mutex<rusqlite::Co
         hide_tray_icon: AtomicBool::new(s.hide_tray_icon),
         edge_docking: AtomicBool::new(s.edge_docking),
         follow_mouse: AtomicBool::new(s.follow_mouse),
+        follow_caret: AtomicBool::new(s.follow_caret),
         arrow_key_selection: AtomicBool::new(s.arrow_key_selection),
         main_hotkey: std::sync::Mutex::new(s.main_hotkey.clone()),
         quick_paste_enabled: AtomicBool::new(s.quick_paste_enabled),
@@ -827,7 +830,9 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             if window.label() != "main" {
                 return;
             }
-            IS_MAIN_WINDOW_FOCUSED.store(*focused, Ordering::Relaxed);
+            // 不要在此处自动更新 IS_MAIN_WINDOW_FOCUSED
+            // 因为在隐藏/重显时 Tauri 可能会发送延迟的虚假 Focused 事件
+            // 导致键盘钩子的 SSOT 状态脱节。我们在 activate_window_focus 中主动管理。
             if *focused {
                 #[cfg(target_os = "windows")]
                 unsafe {

@@ -215,51 +215,90 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                     // 3. Global Navigation Keys
                     if NAVIGATION_ENABLED.load(Ordering::SeqCst) && is_down {
                         if IS_HIDDEN.load(Ordering::Relaxed) { continue; }
+                        let is_focused = IS_MAIN_WINDOW_FOCUSED.load(Ordering::Relaxed);
+                        let is_pinned = WINDOW_PINNED.load(Ordering::Relaxed);
+
+                        if is_pinned && !is_focused { continue; }
                         
-                        let allow_navigation = if let Some(settings) = app_handle.try_state::<SettingsState>() {
-                            settings.arrow_key_selection.load(Ordering::Relaxed)
-                        } else {
-                            true
-                        };
-
-                        if !allow_navigation { continue; }
-
                         let is_enter = vk_code == 0x0D;
                         let is_escape = vk_code == 0x1B;
+                        // 只处理上下方向键
                         let is_up_down = vk_code == 0x26 || vk_code == 0x28;
+                        let is_search_trigger = (vk_code >= 0x30 && vk_code <= 0x39) ||
+                                                (vk_code >= 0x41 && vk_code <= 0x5A) ||
+                                                (vk_code >= 0x60 && vk_code <= 0x6F) ||
+                                                (vk_code >= 0xBA && vk_code <= 0xC0) ||
+                                                (vk_code >= 0xDB && vk_code <= 0xDE) ||
+                                                vk_code == 0x08 || vk_code == 0x20;
+
+                        let ctrl_down = unsafe { (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
+                        let alt_down = unsafe { (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0 };
+                        let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
 
                         if is_enter || is_escape || is_up_down {
-                            if is_enter && !NAVIGATION_MODE_ACTIVE.load(Ordering::Relaxed) {
-                                continue;
-                            }
-
-                            let ctrl_down = unsafe { (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
-                            let alt_down = unsafe { (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0 };
-                            let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
-
-                            if !ctrl_down && !alt_down && !win_down {
-                                let action = match vk_code {
-                                    0x26 => "up",
-                                    0x28 => "down",
-                                    0x0D => "enter",
-                                    0x1B => "escape",
-                                    _ => "",
-                                };
-                                
-                                if !action.is_empty() {
-                                    if is_up_down {
-                                        NAVIGATION_MODE_ACTIVE.store(true, Ordering::Relaxed);
-                                    } else if is_escape {
-                                        NAVIGATION_MODE_ACTIVE.store(false, Ordering::Relaxed);
-                                    }
-
-                                    if action == "escape" {
-                                        let _ = app_handle.emit("navigation-action", "escape");
-                                        toggle_window(&app_handle);
-                                    } else {
-                                        let _ = app_handle.emit("navigation-action", action);
-                                    }
+                            let action = match vk_code {
+                                0x26 => "up".to_string(),
+                                0x28 => "down".to_string(),
+                                0x0D => "enter".to_string(),
+                                0x1B => "escape".to_string(),
+                                _ => "".to_string(),
+                            };
+                            
+                            if !action.is_empty() {
+                                if is_up_down {
+                                    NAVIGATION_MODE_ACTIVE.store(true, Ordering::Relaxed);
+                                } else if is_escape || action == "enter" {
+                                    NAVIGATION_MODE_ACTIVE.store(false, Ordering::Relaxed);
                                 }
+
+                                if action == "escape" {
+                                    let _ = app_handle.emit("navigation-action", "escape");
+                                    toggle_window(&app_handle);
+                                } else {
+                                    let _ = app_handle.emit("navigation-action", action);
+                                }
+                            }
+                        } else if !ctrl_down && !alt_down && !win_down {
+                            if is_search_trigger && !is_focused {
+                                NAVIGATION_MODE_ACTIVE.store(false, Ordering::Relaxed);
+                                let _ = app_handle.emit("navigation-action", "search-activate");
+                                let _ = crate::app::window_manager::activate_window_focus(app_handle.clone());
+                                
+                                // IME Replay 逻辑
+                                let vk_copy = vk_code;
+                                tauri::async_runtime::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+                                    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY};
+                                    unsafe {
+                                        let inputs = [
+                                            INPUT {
+                                                r#type: INPUT_KEYBOARD,
+                                                Anonymous: INPUT_0 {
+                                                    ki: KEYBDINPUT {
+                                                        wVk: VIRTUAL_KEY(vk_copy as u16),
+                                                        wScan: 0,
+                                                        dwFlags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0),
+                                                        time: 0,
+                                                        dwExtraInfo: 0x57494E50,
+                                                    }
+                                                }
+                                            },
+                                            INPUT {
+                                                r#type: INPUT_KEYBOARD,
+                                                Anonymous: INPUT_0 {
+                                                    ki: KEYBDINPUT {
+                                                        wVk: VIRTUAL_KEY(vk_copy as u16),
+                                                        wScan: 0,
+                                                        dwFlags: KEYEVENTF_KEYUP,
+                                                        time: 0,
+                                                        dwExtraInfo: 0x57494E50,
+                                                    }
+                                                }
+                                            }
+                                        ];
+                                        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+                                    }
+                                });
                             }
                         }
                     }
@@ -322,6 +361,11 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
     if n_code >= 0 && (is_down || is_up) {
         let kbd_struct = *(l_param.0 as *const KBDLLHOOKSTRUCT);
         
+        // 检查是否是我们注入的重播按键（IME 重播机制）
+        if kbd_struct.dwExtraInfo == 0x57494E50 {
+            return CallNextHookEx(None, n_code, w_param, l_param);
+        }
+        
         // Fast path: send to asynchronous channel and return
         if let Some(sender) = INPUT_SENDER.get() {
             let _ = sender.send(InputEvent::Keyboard {
@@ -331,23 +375,46 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
         }
 
         // Special case: block navigation keys if window is active to prevent system from handling them
-        if NAVIGATION_ENABLED.load(Ordering::SeqCst) && !IS_HIDDEN.load(Ordering::Relaxed) {
-            let vk = kbd_struct.vkCode;
-            let is_navigation_key = vk == 0x26 || vk == 0x28 || vk == 0x0D || vk == 0x1B;
-            if is_navigation_key && is_down {
-                let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
-                let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0;
-                let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
-                
-                if !ctrl_down && !alt_down && !win_down {
-                    // 当窗口固定置顶时，如果窗口没有聚焦且没有进入显式导航模式，不拦截按键，允许操作其他软件
-                    if WINDOW_PINNED.load(Ordering::Relaxed) && 
-                       !IS_MAIN_WINDOW_FOCUSED.load(Ordering::Relaxed) &&
-                       !NAVIGATION_MODE_ACTIVE.load(Ordering::Relaxed) {
-                        return CallNextHookEx(None, n_code, w_param, l_param);
-                    }
+        let is_visible = !IS_HIDDEN.load(Ordering::Relaxed) && NAVIGATION_ENABLED.load(Ordering::SeqCst);
+        let is_focused = IS_MAIN_WINDOW_FOCUSED.load(Ordering::Relaxed);
 
-                    // Block these keys so the background worker can handle them without system interference
+        let is_pinned = WINDOW_PINNED.load(Ordering::Relaxed);
+
+        if is_visible {
+            // 【核心逻辑变更：置顶模式】
+            // 如果处于置顶模式，且没有聚焦搜索框，则完全不拦截任何按键，放行给底层 OS
+            // 只有当用户主动聚焦搜索框后，我们才恢复对上下键、回车键等导航键的拦截
+            if is_pinned && !is_focused {
+                return CallNextHookEx(None, n_code, w_param, l_param);
+            }
+
+            let vk = kbd_struct.vkCode;
+            
+            // 注意：只拦截上下方向键（0x26, 0x28），不要拦截左右键（0x25, 0x27），否则会导致搜索框无法左右移动光标
+            let is_arrow_key = vk == 0x26 || vk == 0x28;
+            let is_enter_esc = vk == 0x0D || vk == 0x1B;
+            // 忽略 allow_navigation 设置，强制允许上下键选择，否则默认设置会导致用户认为失效
+            let is_navigation_key = is_arrow_key || is_enter_esc;
+
+            let is_search_trigger = (vk >= 0x30 && vk <= 0x39) || // 0-9
+                                    (vk >= 0x41 && vk <= 0x5A) || // A-Z
+                                    (vk >= 0x60 && vk <= 0x6F) || // Numpad
+                                    (vk >= 0xBA && vk <= 0xC0) || // Punctuation
+                                    (vk >= 0xDB && vk <= 0xDE) || // Punctuation
+                                    vk == 0x08 || vk == 0x20;     // Backspace, Space
+            
+            let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
+            let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0;
+            let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
+
+            // 无论是否聚焦，我们都强行拦截导航键以防 Windows 焦点未成功转移时发生穿透
+            if is_navigation_key {
+                // 不再检查 modifiers (Ctrl/Alt/Win)，只要用户按了上下方向键/回车/ESC，就强行拦截
+                // 这解决了用户在唤出面板后物理按键没松开导致拦截失效的问题
+                return LRESULT(1);
+            } else if is_search_trigger && !is_focused {
+                // 对于文本输入（搜索触发），只有在【未聚焦】时拦截并重播。若已聚焦，放行给 OS 以激活原生 IME。
+                if !ctrl_down && !alt_down && !win_down {
                     return LRESULT(1);
                 }
             }
