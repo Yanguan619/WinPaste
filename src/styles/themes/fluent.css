@@ -1,12 +1,13 @@
-/* Fluent Design Theme (Mica Alt / Acrylic inspired) */
-:root,
-body {
-  background-color: transparent !important;
-  
+/* Fluent Design Theme (Fluent 2 inspired) */
+:root {
+  --surface-opacity-scale: 1;
+}
+
+/* Dark Mode Variables for Fluent Theme */
+.dark-mode {
   --surface-color-rgb: 32, 32, 32;
-  --surface-opacity-scale: 0.8;
   
-  --bg-window: rgba(var(--surface-color-rgb), calc(0.85 * var(--surface-opacity-scale, 1)));
+  --bg-window: rgba(var(--surface-color-rgb), calc(0.85 * var(--surface-opacity-scale)));
   --bg-content: transparent;
   --bg-toolbar: transparent;
   --bg-panel: rgba(45, 45, 45, 0.4);
@@ -28,57 +29,89 @@ body {
   --shadow-xs: 0 4px 10px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 10px 22px rgba(0, 0, 0, 0.25);
   --shadow-md: 0 18px 36px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.35);
   
   --shell-background: rgba(var(--surface-color-rgb), 0.7);
   --shell-border: 1px solid rgba(255, 255, 255, 0.1);
   --shell-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
-  --shell-radius: 8px;
 
-  --toolbar-border: 1px solid rgba(255, 255, 255, 0.08);
-
-  --input-border: 1px solid rgba(255, 255, 255, 0.12);
-  --input-radius: 4px;
-  --input-shadow: none;
-  --input-focus-shadow: 0 0 0 2px rgba(96, 205, 255, 0.4);
-
-  --button-border: 1px solid rgba(255, 255, 255, 0.08);
-  --button-radius: 4px;
-  --button-shadow: var(--shadow-xs);
-  
   --card-border: 1px solid rgba(255, 255, 255, 0.08);
-  --card-radius: 8px;
-  --card-shadow: none;
   --card-hover-bg: rgba(255, 255, 255, 0.04);
-  
-  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --scrollbar-hover: rgba(255, 255, 255, 0.2);
-  
-  font-family: 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
-/* Ensure dark mode class is ignored or compatible */
-.dark-mode, .light-mode {
-    /* Fluent theme is unified dark for now */
+/* Light Mode Variables for Fluent Theme */
+.light-mode {
+  --surface-color-rgb: 243, 243, 243;
+  
+  --bg-window: rgba(var(--surface-color-rgb), calc(0.85 * var(--surface-opacity-scale)));
+  --bg-content: #ffffff;
+  --bg-toolbar: rgba(243, 243, 243, 0.5);
+  --bg-panel: #ffffff;
+  --bg-input: #ffffff;
+  --bg-element: #f9f9f9;
+  --bg-button: #ffffff;
+
+  --text-primary: #1b1b1b;
+  --text-secondary: #5d5d5d;
+  --text-muted: #707070;
+
+  --accent-color: #0067c0;
+  --accent-color-rgb: 0, 103, 192;
+  --accent-hover: #005a9e;
+
+  --line-soft: rgba(0, 0, 0, 0.04);
+  --line-strong: rgba(0, 0, 0, 0.08);
+  
+  --shadow-xs: 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 4px 8px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.08);
+  
+  --shell-background: rgba(var(--surface-color-rgb), 0.7);
+  --shell-border: 1px solid rgba(0, 0, 0, 0.12);
+  --shell-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+
+  --card-border: 1px solid rgba(0, 0, 0, 0.06);
+  --card-hover-bg: rgba(0, 0, 0, 0.015);
 }
 
-/* Rounded corners for items */
-.history-item {
-    border-radius: var(--card-radius);
+/* Shared Fluent Component Styles */
+.theme-fluent .app-container {
+    backdrop-filter: blur(20px) saturate(180%);
+}
+
+.theme-fluent .history-item {
+    border-radius: 6px;
     border: var(--card-border);
     background: var(--bg-element);
     margin-bottom: 4px;
-    transition: background 0.1s ease;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-xs);
 }
 
-.history-item:hover {
+.theme-fluent.light-mode .history-item {
+    background: #ffffff;
+}
+
+.theme-fluent .history-item:hover {
     background: var(--card-hover-bg);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
 }
 
-.history-item.selected {
-    background: rgba(96, 205, 255, 0.16) !important;
-    border: 1px solid rgba(96, 205, 255, 0.5) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
-    outline: 1px solid rgba(96, 205, 255, 0.3);
+.theme-fluent .history-item.selected {
+    background: rgba(var(--accent-color-rgb), 0.06) !important;
+    border: 1px solid var(--accent-color) !important;
+    box-shadow: var(--shadow-sm) !important;
+    outline: 1px solid rgba(var(--accent-color-rgb), 0.2);
     outline-offset: -1px;
+}
+
+.theme-fluent.light-mode .btn-icon.active {
+    background: var(--accent-color) !important;
+    color: #ffffff !important;
+    border-color: var(--accent-color) !important;
+}
+
+.theme-fluent.dark-mode .btn-icon.active {
+    background: var(--accent-color) !important;
+    color: #000000 !important;
 }

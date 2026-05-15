@@ -50,6 +50,8 @@ interface ClipboardSettingsGroupProps {
     setPasteMethod: (val: string) => void;
     sequentialMode: boolean;
     setSequentialModeState: (val: boolean) => void;
+    quickPasteEnabled: boolean;
+    setQuickPasteEnabled: (val: boolean) => void;
     sequentialHotkey: string;
     isRecordingSequential: boolean;
     setIsRecordingSequential: (val: boolean) => void;
@@ -397,6 +399,103 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                             <div className="toggle"><div className="left" /><div className="right" /></div>
                         </label>
                     </div>
+                    <div className="setting-item">
+                        <props.LabelWithHint
+                            label={props.t('quick_paste_enabled_label')}
+                            hint={props.t('quick_paste_enabled_hint')}
+                            hintKey="quick_paste_enabled"
+                        />
+                        <label className="switch">
+                            <input
+                                className="cb"
+                                type="checkbox"
+                                checked={props.quickPasteEnabled}
+                                onChange={(e) => {
+                                    const val = e.target.checked;
+                                    props.setQuickPasteEnabled(val);
+                                    props.saveAppSetting('quick_paste_enabled', String(val));
+                                }}
+                            />
+                            <div className="toggle"><div className="left" /><div className="right" /></div>
+                        </label>
+                    </div>
+
+                    <div className="setting-item">
+                        <props.LabelWithHint
+                            label={props.t('sequential_paste_mode')}
+                            hint={props.t('sequential_paste_hint')}
+                            hintKey="sequential_paste_mode"
+                        />
+                        <label className="switch">
+                            <input
+                                className="cb"
+                                type="checkbox"
+                                checked={props.sequentialMode}
+                                onChange={(e) => {
+                                    const val = e.target.checked;
+                                    props.setSequentialModeState(val);
+                                    props.saveAppSetting('sequential_mode', String(val));
+                                }}
+                            />
+                            <div className="toggle"><div className="left" /><div className="right" /></div>
+                        </label>
+                    </div>
+
+                    <div className="setting-item" style={{ opacity: props.sequentialMode ? 1 : 0.5, pointerEvents: props.sequentialMode ? 'auto' : 'none' }}>
+                        <div className="item-label-group">
+                            <span className="item-label">{props.t('sequential_paste_hotkey_label')}</span>
+                            <span className="hint">
+                                {props.isRecordingSequential ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <span style={{ color: '#ff9800', fontWeight: 'bold' }}>
+                                            {props.t('win_key_not_recommended')}
+                                        </span>
+                                        <span style={{ fontSize: '11px', opacity: 0.8 }}>
+                                            {props.t('hotkey_recording_esc')}
+                                        </span>
+                                    </div>
+                                ) : props.t('hotkey_click_hint')}
+                            </span>
+                        </div>
+                        <div
+                            className={`key-group ${props.isRecordingSequential ? 'recording' : ''}`}
+                            onClick={() => props.setIsRecordingSequential(true)}
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                                if (!props.isRecordingSequential) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+
+                                if (e.key === 'Escape') {
+                                    props.setIsRecordingSequential(false);
+                                    return;
+                                }
+
+                                const modifiers = [];
+                                if (e.ctrlKey) modifiers.push('Ctrl');
+                                if (e.shiftKey) modifiers.push('Shift');
+                                if (e.altKey) modifiers.push('Alt');
+
+                                const key = e.key.toUpperCase();
+                                if (['CONTROL', 'SHIFT', 'ALT', 'META'].includes(key)) return;
+
+                                const newHotkey = [...modifiers, key].join('+');
+                                props.updateSequentialHotkey(newHotkey);
+                            }}
+                        >
+                            {props.isRecordingSequential ? (
+                                <div className="key-cap" style={{ width: '8em' }}>{props.t('waiting_for_input')}</div>
+                            ) : (
+                                (props.sequentialHotkey || '').split('+').filter(Boolean).map((k, i) => (
+                                    <div key={i} className="key-cap">{k}</div>
+                                ))
+                            )}
+                            {!props.isRecordingSequential && !props.sequentialHotkey && (
+                                <div className="key-cap" style={{ opacity: 0.5 }}>{props.t('not_set')}</div>
+                            )}
+                        </div>
+                    </div>
+
                     <div className="setting-item">
                         <props.LabelWithHint
                             label={props.t('paste_method')}

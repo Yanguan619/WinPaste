@@ -34,6 +34,7 @@ export interface SettingsPanelProps {
     deleteAfterPaste: boolean;
     moveToTopAfterPaste: boolean;
     sequentialMode: boolean;
+    quickPasteEnabled: boolean;
     sequentialHotkey: string;
     isRecordingSequential: boolean;
     richPasteHotkey: string;
@@ -101,6 +102,7 @@ export interface SettingsPanelProps {
     setMoveToTopAfterPaste: (val: boolean) => void;
     saveAppSetting: (key: string, val: string) => void;
     setSequentialModeState: (val: boolean) => void;
+    setQuickPasteEnabled: (val: boolean) => void;
     setIsRecordingSequential: (val: boolean) => void;
     updateSequentialHotkey: (key: string) => void;
     setIsRecordingRich: (val: boolean) => void;
@@ -138,7 +140,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
     const {
         t, language,
         collapsedGroups, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, autoHideTags, pinnedCollapsed, deleteAfterPaste, moveToTopAfterPaste,
-        sequentialMode, sequentialHotkey, isRecordingSequential,
+        sequentialMode, quickPasteEnabled, sequentialHotkey, isRecordingSequential,
         richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch,
         privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, registryWinVEnabled, setRegistryWinVEnabled, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection, vibrancyEnabled, setVibrancyEnabled,
         colorMode, setColorMode,
@@ -151,7 +153,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
         toggleGroup, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setAutoHideTags, setPinnedCollapsed, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
-        setSequentialModeState, setIsRecordingSequential, updateSequentialHotkey,
+        setSequentialModeState, setQuickPasteEnabled, setIsRecordingSequential, updateSequentialHotkey,
         setIsRecordingRich, updateRichPasteHotkey,
         setIsRecordingSearch, updateSearchHotkey,
         setPrivacyProtection,
@@ -291,6 +293,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setPasteMethod={setPasteMethod}
                 sequentialMode={sequentialMode}
                 setSequentialModeState={setSequentialModeState}
+                quickPasteEnabled={quickPasteEnabled}
+                setQuickPasteEnabled={setQuickPasteEnabled}
                 sequentialHotkey={sequentialHotkey}
                 isRecordingSequential={isRecordingSequential}
                 setIsRecordingSequential={setIsRecordingSequential}

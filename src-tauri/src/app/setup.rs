@@ -185,6 +185,7 @@ pub struct StartupSettings {
     pub window_width: Option<u32>,
     pub window_height: Option<u32>,
     pub main_hotkey: String,
+    pub quick_paste_enabled: bool,
     pub arrow_key_selection: bool,
 }
 
@@ -220,6 +221,7 @@ fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
             .flatten()
             .and_then(|v| v.parse::<u32>().ok()),
         main_hotkey: repo.get("app.hotkey").unwrap_or(Some("Win+V".to_string())).unwrap_or("Win+V".to_string()),
+        quick_paste_enabled: repo.get("app.quick_paste_enabled").unwrap_or(Some("true".to_string())).map(|v| v == "true").unwrap_or(true),
         arrow_key_selection: repo.get("app.arrow_key_selection").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
     }
 }
@@ -251,6 +253,7 @@ fn setup_state(app: &App, conn_arc: std::sync::Arc<std::sync::Mutex<rusqlite::Co
         follow_mouse: AtomicBool::new(s.follow_mouse),
         arrow_key_selection: AtomicBool::new(s.arrow_key_selection),
         main_hotkey: std::sync::Mutex::new(s.main_hotkey.clone()),
+        quick_paste_enabled: AtomicBool::new(s.quick_paste_enabled),
         monitors: std::sync::Mutex::new(Vec::new()),
     });
     
@@ -325,20 +328,20 @@ fn start_services(app: &App, s: &StartupSettings, app_handle: AppHandle) {
     
     // Sequential Hotkey
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-    if let Ok(shortcut) = s.sequential_hotkey.replace("Win", "Super").parse::<Shortcut>() {
+    if let Ok(shortcut) = normalize_shortcut_string(&s.sequential_hotkey).parse::<Shortcut>() {
         let _ = app.global_shortcut().register(shortcut);
     }
 
     // Rich Paste Hotkey
     if !s.rich_paste_hotkey.is_empty() {
-        if let Ok(shortcut) = s.rich_paste_hotkey.replace("Win", "Super").parse::<Shortcut>() {
+        if let Ok(shortcut) = normalize_shortcut_string(&s.rich_paste_hotkey).parse::<Shortcut>() {
             let _ = app.global_shortcut().register(shortcut);
         }
     }
 
     // Search Hotkey (show window + focus search box)
     if !s.search_hotkey.is_empty() {
-        if let Ok(shortcut) = s.search_hotkey.replace("Win", "Super").parse::<Shortcut>() {
+        if let Ok(shortcut) = normalize_shortcut_string(&s.search_hotkey).parse::<Shortcut>() {
             let _ = app.global_shortcut().register(shortcut);
         }
     }
@@ -748,20 +751,40 @@ fn setup_taskbar_listener(app: &App) {
     }
 }
 
+fn normalize_shortcut_string(hk: &str) -> String {
+    hk.replace("Win", "Super")
+        .replace("Shift+!", "Shift+1")
+        .replace("Shift+@", "Shift+2")
+        .replace("Shift+#", "Shift+3")
+        .replace("Shift+$", "Shift+4")
+        .replace("Shift+%", "Shift+5")
+        .replace("Shift+^", "Shift+6")
+        .replace("Shift+&", "Shift+7")
+        .replace("Shift+*", "Shift+8")
+        .replace("Shift+(", "Shift+9")
+        .replace("Shift+)", "Shift+0")
+}
+
 pub fn handle_global_shortcut(app: &AppHandle, shortcut: &tauri_plugin_global_shortcut::Shortcut) {
     use tauri_plugin_global_shortcut::Shortcut;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let last = crate::global_state::LAST_GLOBAL_HOTKEY_TIMESTAMP.swap(now, std::sync::atomic::Ordering::Relaxed);
+    if now.saturating_sub(last) < 300 {
+        return;
+    }
+
     let settings = app.state::<SettingsState>();
 
     if let Ok(main_s) = {
         let val = settings.main_hotkey.lock().unwrap().clone();
-        val.replace("Win", "Super").parse::<Shortcut>()
+        normalize_shortcut_string(&val).parse::<Shortcut>()
     } {
         if shortcut == &main_s { toggle_window(app); return; }
     }
 
     if let Ok(seq_s) = {
         let val = settings.sequential_paste_hotkey.lock().unwrap().clone();
-        val.replace("Win", "Super").parse::<Shortcut>()
+        normalize_shortcut_string(&val).parse::<Shortcut>()
     } {
         if shortcut == &seq_s {
             let is_seq = settings.sequential_mode.load(Ordering::Relaxed);
@@ -782,14 +805,14 @@ pub fn handle_global_shortcut(app: &AppHandle, shortcut: &tauri_plugin_global_sh
 
     if let Ok(rich_s) = {
         let val = settings.rich_paste_hotkey.lock().unwrap().clone();
-        val.replace("Win", "Super").parse::<Shortcut>()
+        normalize_shortcut_string(&val).parse::<Shortcut>()
     } {
         if shortcut == &rich_s { crate::services::clipboard_ops::paste_latest_rich(app.clone()); }
     }
 
     if let Ok(search_s) = {
         let val = settings.search_hotkey.lock().unwrap().clone();
-        val.replace("Win", "Super").parse::<Shortcut>()
+        normalize_shortcut_string(&val).parse::<Shortcut>()
     } {
         if shortcut == &search_s {
             toggle_window(app);

@@ -55,9 +55,9 @@ const AppSelectorModal = ({ show, installedApps, theme, colorMode, t, onClose, o
                         />
                     </div>
 
-                    <div style={{ display: 'flex', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
                         <button
-                            className="btn-icon"
+                            className="confirm-dialog-button primary"
                             onClick={async () => {
                                 try {
                                     const selected = await open({
@@ -73,14 +73,14 @@ const AppSelectorModal = ({ show, installedApps, theme, colorMode, t, onClose, o
                                     }
                                 } catch (err) { console.error(err); }
                             }}
-                            style={{ flex: 1, height: '36px', fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase' }}
+                            style={{ flex: 1, height: '36px', fontSize: '13px' }}
                         >
                             {t('browse_file')}
                         </button>
                         <button
-                            className="btn-icon"
+                            className="confirm-dialog-button"
                             onClick={onClose}
-                            style={{ flex: 1, height: '36px', fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase', background: '#ff4d4f', color: '#fff', border: '2px solid #333' }}
+                            style={{ flex: 1, height: '36px', fontSize: '13px' }}
                         >
                             {t('cancel')}
                         </button>

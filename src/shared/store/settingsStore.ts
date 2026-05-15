@@ -48,6 +48,7 @@ interface SettingsState {
   hotkey: string;
   sequentialHotkey: string;
   richPasteHotkey: string;
+  quickPasteEnabled: boolean;
   searchHotkey: string;
   
   // Data/System
@@ -95,6 +96,7 @@ interface SettingsState {
   setHotkey: (key: string) => void;
   setSequentialHotkey: (key: string) => void;
   setRichPasteHotkey: (key: string) => void;
+  setQuickPasteEnabled: (enabled: boolean) => void;
   setSearchHotkey: (key: string) => void;
   setDataPath: (path: string) => void;
   setInstalledApps: (apps: InstalledAppOption[]) => void;
@@ -142,6 +144,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   hotkey: "Alt+C",
   sequentialHotkey: "Alt+V",
   richPasteHotkey: "Ctrl+Shift+Z",
+  quickPasteEnabled: true,
   searchHotkey: "",
   dataPath: "",
   installedApps: [],
@@ -186,6 +189,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setHotkey: (hotkey) => set({ hotkey }),
   setSequentialHotkey: (sequentialHotkey) => set({ sequentialHotkey }),
   setRichPasteHotkey: (richPasteHotkey) => set({ richPasteHotkey }),
+  setQuickPasteEnabled: (quickPasteEnabled) => set({ quickPasteEnabled }),
   setSearchHotkey: (searchHotkey) => set({ searchHotkey }),
   setDataPath: (dataPath) => set({ dataPath }),
   setInstalledApps: (installedApps) => set({ installedApps }),

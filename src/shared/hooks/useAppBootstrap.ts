@@ -25,8 +25,8 @@ export const useAppBootstrap = ({
       if (!disposed) setDataPath(path);
     }).catch(console.error);
 
-    invoke<InstalledAppOption[]>("scan_installed_apps").then((apps) => {
-      if (!disposed) setInstalledApps(apps);
+    invoke<{ name: string; path: string }[]>("scan_installed_apps").then((apps) => {
+      if (!disposed) setInstalledApps(apps.map(app => ({ label: app.name, value: app.path })));
     }).catch(console.error);
 
     invoke<boolean>("is_autostart_enabled").then((enabled) => {

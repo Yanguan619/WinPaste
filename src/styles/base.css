@@ -6,6 +6,7 @@
   --bg-content: transparent;
   --bg-toolbar: rgba(20, 20, 20, 0.4);
   --bg-panel: rgba(45, 45, 45, 0.4);
+  --bg-modal: rgba(35, 35, 35, 0.95);
   --bg-input: rgba(255, 255, 255, 0.06);
   --bg-element: rgba(255, 255, 255, 0.05);
   --bg-button: rgba(255, 255, 255, 0.08);
@@ -151,40 +152,49 @@
   }
 
 .light-mode {
-  --bg-body: #ffffff;
+  --bg-body: #f3f3f3;
   --bg-window: transparent;
-  --bg-content: transparent;
-  --bg-toolbar: rgba(255, 255, 255, 0.1);
-  --bg-panel: rgba(255, 255, 255, 0.3);
-  --bg-input: rgba(0, 0, 0, 0.03);
-  --bg-element: rgba(0, 0, 0, 0.02);
-  --bg-button: rgba(255, 255, 255, 0.6);
+  --bg-content: #ffffff;
+  --bg-toolbar: rgba(243, 243, 243, 0.7);
+  --bg-panel: #ffffff;
+  --bg-modal: rgba(255, 255, 255, 0.95);
+  --bg-input: #ffffff;
+  --bg-element: #f9f9f9;
+  --bg-button: #ffffff;
 
-  --text-primary: #202020;
-  --text-secondary: #505050;
+  --text-primary: #1b1b1b;
+  --text-secondary: #5d5d5d;
   --text-muted: #707070;
 
-  --accent-color: #0078d4;
-  --accent-color-rgb: 0, 120, 212;
+  --accent-color: #0067c0;
+  --accent-color-rgb: 0, 103, 192;
   --accent-hover: #005a9e;
   --border-dark: rgba(0, 0, 0, 0.08);
   --border-light: rgba(0, 0, 0, 0.04);
-  --shadow-color: rgba(0, 0, 0, 0.1);
+  --shadow-color: rgba(0, 0, 0, 0.05);
 
-  --line-soft: rgba(0, 0, 0, 0.05);
-  --line-strong: rgba(0, 0, 0, 0.1);
+  --line-soft: rgba(0, 0, 0, 0.04);
+  --line-strong: rgba(0, 0, 0, 0.08);
 
-  --switch-track-background: rgba(0, 0, 0, 0.1);
-  --panel-border: 1px solid rgba(0, 0, 0, 0.05);
-  --panel-header-background: rgba(0, 0, 0, 0.02);
-  --panel-header-border-color: rgba(0, 0, 0, 0.04);
-  --panel-divider-color: rgba(0, 0, 0, 0.04);
+  --button-active-filled-color: #ffffff;
+  --segment-active-color: #ffffff;
 
-  --card-border: 1px solid rgba(0, 0, 0, 0.04);
-  --card-hover-border-color: rgba(0, 0, 0, 0.08);
-  --shell-border: 1px solid rgba(0, 0, 0, 0.12);
-  --title-color: #202020;
-  --header-btn-color: #424242;
+  --switch-track-background: rgba(0, 0, 0, 0.08);
+  --panel-border: 1px solid rgba(0, 0, 0, 0.06);
+  --panel-header-background: #ffffff;
+  --panel-header-border-color: rgba(0, 0, 0, 0.05);
+  --panel-divider-color: rgba(0, 0, 0, 0.05);
+
+  --card-border: 1px solid rgba(0, 0, 0, 0.06);
+  --card-hover-border-color: rgba(0, 0, 0, 0.1);
+  --shell-border: 1px solid rgba(0, 0, 0, 0.08);
+  --title-color: #1b1b1b;
+  --header-btn-color: #5d5d5d;
+
+  --shadow-xs: 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 4px 8px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 24px rgba(0, 0, 0, 0.12);
 }
 
 /* Base resets for Fluent look */
@@ -210,23 +220,19 @@ body {
     height: 100%;
     display: flex;
     flex-direction: column;
-    /* Base background for Mica to blend with */
-    background: rgba(25, 25, 25, 0.05);
+    background: var(--bg-body);
     color: var(--text-primary);
     border: var(--shell-border);
-    border-radius: 0; /* Default to square for Windows 10 */
-    /* Optimized CSS shadow to avoid drag lag while fixing native black bars */
+    border-radius: 0; 
     box-shadow: var(--shell-shadow);
     overflow: hidden;
-    /* Soft top-light effect */
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
 }
 
 .light-mode .app-container {
-    background: rgba(243, 243, 243, 0.7);
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.3) 100%);
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    background: #f3f3f3;
+    background-image: none;
+    border: var(--shell-border);
+    box-shadow: var(--shell-shadow);
 }
 
 .dark-mode .app-container {

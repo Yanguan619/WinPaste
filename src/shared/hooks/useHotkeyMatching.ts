@@ -64,7 +64,14 @@ export const matchesHotkey = (
   if (keyUpper.startsWith("F") && keyUpper.length > 1) return eventKey.toUpperCase() === keyUpper;
 
   if (keyUpper.length === 1) {
-    return eventKey.toUpperCase() === keyUpper;
+    if (eventKey.toUpperCase() === keyUpper) return true;
+    
+    // Handle shift-modified digits (e.g. Shift+3 -> #)
+    const shiftDigitMap: Record<string, string> = {
+      "!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+      "^": "6", "&": "7", "*": "8", "(": "9", ")": "0"
+    };
+    if (event.shiftKey && shiftDigitMap[eventKey] === keyUpper) return true;
   }
 
   return eventKey.toUpperCase() === keyUpper;

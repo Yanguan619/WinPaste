@@ -65,6 +65,8 @@ export const useSettingsPanelProps = ({
     setMoveToTopAfterPaste: state.setMoveToTopAfterPaste,
     sequentialMode: state.sequentialMode,
     setSequentialModeState: state.setSequentialModeState,
+    quickPasteEnabled: state.quickPasteEnabled,
+    setQuickPasteEnabled: state.setQuickPasteEnabled,
     sequentialHotkey: state.sequentialHotkey,
     isRecordingSequential: state.isRecordingSequential,
     setIsRecordingSequential: state.setIsRecordingSequential,

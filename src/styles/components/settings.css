@@ -1,22 +1,33 @@
 /* Settings Panel */
 .settings-view {
   background: transparent;
-  padding: 12px 8px;
+  padding: 12px 0px;
   max-width: 420px;
   margin: 0 auto;
   width: 100%;
-  overflow-y: auto;
+  overflow-y: visible;
   overflow-x: hidden;
+  scrollbar-gutter: stable both-edges;
 }
 
 .settings-group {
   border: var(--panel-border);
-  background: rgba(255, 255, 255, 0.02);
-  margin: 0 10px 8px 10px;
-  box-shadow: var(--panel-shadow);
+  background: var(--bg-panel);
+  margin: 0 10px 12px 10px;
+  box-shadow: var(--shadow-sm);
   border-radius: var(--panel-radius);
   overflow: visible !important;
   position: relative;
+  transition: box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s ease;
+}
+
+.settings-group:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.settings-group:hover {
+  box-shadow: var(--shadow-md);
 }
 
 .group-header {
@@ -38,12 +49,13 @@
 
 .settings-group.collapsed .group-header,
 .settings-group:not(.collapsed) .group-header {
-  padding: 12px;
+  padding: 14px 16px;
   background: var(--panel-header-background);
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
+  border-radius: var(--panel-radius);
 }
 
 .settings-group:not(.collapsed) .group-header {
@@ -83,17 +95,9 @@
   content: "";
   display: block;
   height: 1px;
-  margin: 0 2px 10px;
-  background:
-    linear-gradient(
-      90deg,
-      transparent 0%,
-      var(--panel-header-border-color) 8%,
-      var(--panel-divider-color) 50%,
-      var(--panel-header-border-color) 92%,
-      transparent 100%
-    );
-  opacity: 0.9;
+  margin: 0 12px 6px;
+  background: var(--panel-divider-color);
+  opacity: 0.6;
 }
 
 @keyframes settings-group-reveal {
@@ -121,9 +125,15 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 0;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--panel-divider-color);
-  min-height: 34px;
+  min-height: 44px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.setting-item:hover {
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .setting-item.column {
@@ -192,7 +202,7 @@
 }
 
 .setting-item span.item-label {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-primary);
   font-size: var(--font-size-md);
   display: flex;
@@ -383,8 +393,8 @@ body.theme-acrylic .settings-view select.search-input option {
   position: absolute;
   inset: 0;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--bg-element);
+  border: 1px solid var(--border-light);
   border-radius: 20px;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -396,9 +406,10 @@ body.theme-acrylic .settings-view select.search-input option {
   left: 3px;
   width: 12px;
   height: 12px;
-  background: #ffffff;
+  background: var(--text-primary);
+  opacity: 0.8;
   border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -491,7 +502,8 @@ body.theme-acrylic .settings-view select.search-input option {
 
 .switch input:checked + .toggle::before {
   transform: translateX(20px);
-  background: #000000; /* Dark thumb on accent background */
+  background: #ffffff;
+  opacity: 1;
 }
 
 .key-group {

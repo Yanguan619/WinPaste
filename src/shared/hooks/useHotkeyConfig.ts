@@ -75,8 +75,23 @@ export const useHotkeyConfig = ({
     [hotkey, sequentialMode, sequentialHotkey, richPasteHotkey, searchHotkey, t, pushToast]
   );
 
+  const normalizeHotkey = (hk: string): string => {
+    return hk
+      .replace("Shift+!", "Shift+1")
+      .replace("Shift+@", "Shift+2")
+      .replace("Shift+#", "Shift+3")
+      .replace("Shift+$", "Shift+4")
+      .replace("Shift+%", "Shift+5")
+      .replace("Shift+^", "Shift+6")
+      .replace("Shift+&", "Shift+7")
+      .replace("Shift+*", "Shift+8")
+      .replace("Shift+(", "Shift+9")
+      .replace("Shift+)", "Shift+0");
+  };
+
   const updateHotkey = useCallback(
-    async (newHotkey: string) => {
+    async (rawHotkey: string) => {
+      const newHotkey = normalizeHotkey(rawHotkey);
       const hasConflict = checkHotkeyConflict(newHotkey, "main");
       if (hasConflict) {
         setIsRecording(false);
@@ -108,7 +123,8 @@ export const useHotkeyConfig = ({
   );
 
   const updateSequentialHotkey = useCallback(
-    async (newHotkey: string) => {
+    async (rawHotkey: string) => {
+      const newHotkey = normalizeHotkey(rawHotkey);
       const hasConflict = checkHotkeyConflict(newHotkey, "sequential");
       if (hasConflict) {
         setIsRecordingSequential(false);
@@ -141,7 +157,8 @@ export const useHotkeyConfig = ({
   );
 
   const updateRichPasteHotkey = useCallback(
-    async (newHotkey: string) => {
+    async (rawHotkey: string) => {
+      const newHotkey = normalizeHotkey(rawHotkey);
       const hasConflict = checkHotkeyConflict(newHotkey, "rich");
       if (hasConflict) {
         setIsRecordingRich(false);
@@ -174,7 +191,8 @@ export const useHotkeyConfig = ({
   );
 
   const updateSearchHotkey = useCallback(
-    async (newHotkey: string) => {
+    async (rawHotkey: string) => {
+      const newHotkey = normalizeHotkey(rawHotkey);
       const hasConflict = checkHotkeyConflict(newHotkey, "search");
       if (hasConflict) {
         setIsRecordingSearch(false);

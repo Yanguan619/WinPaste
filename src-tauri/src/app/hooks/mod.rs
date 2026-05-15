@@ -142,12 +142,13 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                 0xDD => "]".to_string(),
                                 0xDE => "'".to_string(),
                                 k if k >= 0x70 && k <= 0x87 => format!("F{}", k - 0x6F),
-                                k if (k >= 0x30 && k <= 0x39) || (k >= 0x41 && k <= 0x5A) => 
+                                k if (k >= 0x30 && k <= 0x39) || (k >= 0x41 && k <= 0x5A) =>
                                     format!("{}", char::from_u32(k).unwrap()),
+                                k if k >= 0x60 && k <= 0x69 => format!("Numpad{}", k - 0x60),
                                 _ => format!("Key_{}", vk_code)
                             };
 
-                            let final_hotkey = format!("{}{}{}{}{}", 
+                            let final_hotkey = format!("{}{}{}{}{}",
                                 if ctrl_down { "Ctrl+" } else { "" },
                                 if unsafe { GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_SHIFT.0 as i32) as u16 & 0x8000 != 0 } { "Shift+" } else { "" },
                                 if alt_down { "Alt+" } else { "" },
@@ -155,10 +156,45 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                 key_name
                             );
                             
-                            let _ = app_handle.emit("hotkey-recorded", final_hotkey);
+                            crate::info!(">>> [DEBUG] Recorded Hotkey: {}", final_hotkey);
+                            let _ = app_handle.emit("hotkey-recorded", final_hotkey.clone());
                             IS_RECORDING.store(false, Ordering::SeqCst);
                         }
                         continue;
+                    }
+
+                    // 1.5 Handle Quick Paste via Ctrl+Shift+0..9 (Top Row and Numpad)
+                    if is_down && !IS_RECORDING.load(Ordering::SeqCst) {
+                        let is_top_digit = vk_code >= 0x30 && vk_code <= 0x39;
+                        let is_numpad_digit = vk_code >= 0x60 && vk_code <= 0x69;
+                        if is_top_digit || is_numpad_digit {
+                            let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
+                            let shift_down = unsafe { GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_SHIFT.0 as i32) as u16 & 0x8000 != 0 };
+                            let alt_down = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0 };
+                            let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
+                            
+                            // Only trigger quick paste if Ctrl+Shift is held without Alt/Win
+                            if ctrl_down && shift_down && !alt_down && !win_down {
+                                let is_enabled = if let Some(settings) = app_handle.try_state::<SettingsState>() {
+                                    settings.quick_paste_enabled.load(Ordering::Relaxed)
+                                } else {
+                                    true
+                                };
+
+                                if is_enabled {
+                                    let digit = if is_top_digit { vk_code - 0x30 } else { vk_code - 0x60 };
+                                    let index = if digit == 0 { 9 } else { digit - 1 };
+                                    
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                                    let last = crate::global_state::LAST_GLOBAL_HOTKEY_TIMESTAMP.swap(now, Ordering::Relaxed);
+                                    
+                                    if now.saturating_sub(last) > 300 {
+                                        crate::info!(">>> [DEBUG] Triggering quick paste for index: {}", index);
+                                        let _ = app_handle.emit("navigation-action", format!("quick-paste:{}", index));
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // 2. Global Paste Sound Trigger (Ctrl+V)

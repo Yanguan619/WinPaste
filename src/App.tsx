@@ -140,6 +140,7 @@ const App = () => {
     isComposing,
     setSearchIsFocused,
     showTagFilter,
+    setShowTagFilter,
     tagInput,
     setTagInput,
     editingTagsId,
@@ -232,14 +233,40 @@ const App = () => {
     [hotkey, t]
   );
 
+  const [dbTags, setDbTags] = useState<string[]>([]);
+  
+  useEffect(() => {
+    let unlisteners: (() => void)[] = [];
+    const setupListeners = async () => {
+      const fetchTags = () => {
+        invoke<Record<string, number>>('get_all_tags_info')
+          .then(tagMap => {
+            setDbTags(Object.keys(tagMap));
+          }).catch(console.error);
+      };
+      
+      fetchTags();
+      
+      try {
+        unlisteners.push(await listen('clipboard-changed', fetchTags));
+        unlisteners.push(await listen('clipboard-updated', fetchTags));
+        unlisteners.push(await listen('clipboard-removed', fetchTags));
+      } catch (e) {
+        console.error("Failed to setup tag listeners", e);
+      }
+    };
+    setupListeners();
+    return () => unlisteners.forEach(f => f());
+  }, []);
+
   const allTags = useMemo(() => {
     if (!effectiveShowTagManager && !showTagFilter) return [];
-    const set = new Set<string>();
+    const set = new Set<string>(dbTags);
     history.forEach(item => {
       (item.tags || []).forEach(tag => set.add(tag));
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [history, effectiveShowTagManager, showTagFilter]);
+  }, [history, effectiveShowTagManager, showTagFilter, dbTags]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -295,6 +322,7 @@ const App = () => {
       setShowTagManager(false);
       setShowSearchBox(true);
       setSearchIsFocused(true);
+      setShowTagFilter(true);
       requestAnimationFrame(() => {
         searchInputRef.current?.focus();
       });
@@ -309,6 +337,7 @@ const App = () => {
     setShowTagManager,
     setShowSearchBox,
     setSearchIsFocused,
+    setShowTagFilter,
     searchInputRef,
     setSelectedIndexAdapter,
     setIsKeyboardMode

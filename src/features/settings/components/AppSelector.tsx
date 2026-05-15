@@ -4,7 +4,7 @@ import Select from "react-select";
 import type { SingleValue } from "react-select";
 import type { InstalledAppOption } from "../../app/types";
 
-const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { type: string | null, installedApps: InstalledAppOption[], onSelect: (val: string) => void, theme: string, t: (key: string) => string, colorMode: string }) => {
+const AppSelector = ({ type, installedApps, onSelect, theme: _theme, t, colorMode: _colorMode }: { type: string | null, installedApps: InstalledAppOption[], onSelect: (val: string) => void, theme: string, t: (key: string) => string, colorMode: string }) => {
     const [recommended, setRecommended] = useState<InstalledAppOption[]>([]);
     const [loading, setLoading] = useState(false);
 
@@ -58,7 +58,7 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
                 // 2. Client-side Keyword Match (Augmentation)
                 // Find installed apps that match keywords but aren't in registry list
                 const localMatches = installedApps.filter(app => {
-                    const lower = app.label.toLowerCase();
+                    const lower = (app.label || "").toLowerCase();
                     const isMatch = keywords.some(k => lower.includes(k));
                     // Avoid duplicates
                     const alreadyIn = recApps.some(r => r.value === app.value);
@@ -87,7 +87,7 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
         if (type) {
             const n_type = type;
             others = others.filter(app => {
-                const name = app.label.toLowerCase();
+                const name = (app.label || "").toLowerCase();
                 if (n_type === 'image') {
                     const block = ["music", "player", "sound", "video", "audio", "code", "terminal", "powershell", "cmd"];
                     if (block.some(k => name.includes(k))) return false;
@@ -107,9 +107,6 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
         { label: t('all_apps'), options: otherApps }
     ];
 
-    const isModern = theme !== 'retro';
-    const isDarkMode = colorMode === 'dark' || (colorMode === 'system' && document.documentElement.classList.contains('dark-mode'));
-
     return (
         <Select
             options={options}
@@ -122,15 +119,16 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
                 if (option) onSelect(option.value);
             }}
             styles={{
-                control: (base) => ({
+                control: (base, state) => ({
                     ...base,
-                    background: isModern
-                        ? (isDarkMode ? 'rgba(30,30,30,0.75)' : 'rgba(255,255,255,0.6)')
-                        : (isDarkMode ? '#202020' : '#fff'),
-                    border: isModern ? '1px solid rgba(128,128,128,0.2)' : 'none',
-                    borderRadius: isModern ? '8px' : 0,
-                    boxShadow: 'none',
+                    background: 'var(--bg-input)',
+                    border: state.isFocused ? '1px solid var(--input-focus-border-color)' : 'var(--input-border)',
+                    borderRadius: 'var(--input-radius)',
+                    boxShadow: state.isFocused ? 'var(--input-focus-shadow)' : 'none',
                     minHeight: '32px',
+                    '&:hover': {
+                        border: state.isFocused ? '1px solid var(--input-focus-border-color)' : '1px solid var(--border-dark)',
+                    }
                 }),
                 menuPortal: (base) => ({
                     ...base,
@@ -138,19 +136,13 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
                 }),
                 menu: (base) => ({
                     ...base,
-                    background: isModern
-                        ? (isDarkMode ? 'rgba(25,25,25,0.95)' : 'rgba(255,255,255,0.95)')
-                        : (isDarkMode ? '#1f1f1f' : '#fff'),
-                    borderRadius: isModern ? '8px' : 0,
-                    border: isModern
-                        ? (isDarkMode ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(128,128,128,0.2)')
-                        : (isDarkMode ? '2px solid #111' : '2px solid #373737'),
-                    backdropFilter: isModern ? 'blur(12px)' : 'none',
+                    background: 'var(--bg-panel)',
+                    borderRadius: 'var(--panel-radius)',
+                    border: 'var(--panel-border)',
+                    backdropFilter: 'blur(12px)',
                     marginTop: '4px',
                     zIndex: 99999,
-                    boxShadow: isModern
-                        ? (isDarkMode ? '0 8px 32px rgba(0,0,0,0.45)' : '0 8px 32px rgba(0,0,0,0.15)')
-                        : (isDarkMode ? '4px 4px 0 #000' : '4px 4px 0 #1a1a1a'),
+                    boxShadow: 'var(--panel-shadow)',
                     maxHeight: '300px',
                 }),
                 menuList: (base) => ({
@@ -160,26 +152,24 @@ const AppSelector = ({ type, installedApps, onSelect, theme, t, colorMode }: { t
                 }),
                 option: (base, state) => ({
                     ...base,
-                    background: state.isFocused
-                        ? (isModern ? 'var(--accent-color)' : '#373737')
-                        : 'transparent',
-                    color: state.isFocused ? '#fff' : (isDarkMode ? '#eaeaea' : 'var(--text-primary)'),
+                    background: state.isFocused ? 'var(--accent-color)' : 'transparent',
+                    color: state.isFocused ? 'var(--button-active-filled-color, #fff)' : 'var(--text-primary)',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
                     fontSize: '12px'
                 }),
                 groupHeading: (base) => ({
                     ...base,
-                    color: isDarkMode ? '#b0b0b0' : 'var(--text-secondary)',
+                    color: 'var(--text-secondary)',
                     fontWeight: 'bold',
                     fontSize: '11px',
                     textTransform: 'uppercase',
-                    borderBottom: isDarkMode ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(128,128,128,0.1)',
+                    borderBottom: '1px solid var(--panel-divider-color)',
                     marginBottom: '4px'
                 }),
-                placeholder: (base) => ({ ...base, fontSize: '12px', color: isDarkMode ? '#cfcfcf' : base.color }),
-                input: (base) => ({ ...base, color: isDarkMode ? '#eaeaea' : 'var(--text-primary)' }),
-                singleValue: (base) => ({ ...base, color: isDarkMode ? '#eaeaea' : 'var(--text-primary)' })
+                placeholder: (base) => ({ ...base, fontSize: '12px', color: 'var(--text-muted)' }),
+                input: (base) => ({ ...base, color: 'var(--text-primary)' }),
+                singleValue: (base) => ({ ...base, color: 'var(--text-primary)' })
             }}
         />
     );

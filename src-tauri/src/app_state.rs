@@ -25,6 +25,7 @@ pub struct SettingsState {
     pub follow_mouse: AtomicBool,
     pub arrow_key_selection: AtomicBool,
     pub main_hotkey: Mutex<String>,
+    pub quick_paste_enabled: AtomicBool,
     pub monitors: Mutex<Vec<tauri::Monitor>>,
 }
 

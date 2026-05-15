@@ -103,6 +103,21 @@ export const useKeyboardNavigation = ({
         return;
       }
 
+      if (action.startsWith("quick-paste:")) {
+        const idx = parseInt(action.split(":")[1], 10);
+        if (!isNaN(idx) && idx >= 0 && idx < historyRef.current.length) {
+          const item = historyRef.current[idx];
+          if (item) {
+            // First select it visually if window is open
+            setSelectedIndex(idx);
+            selectedIndexRef.current = idx;
+            // Then copy & paste
+            copyToClipboard(item.id, item.content, item.content_type, false, item.is_external, item.file_preview_exists);
+          }
+        }
+        return;
+      }
+
       if (action === "escape") {
         invoke("hide_window_cmd").catch(console.error);
         return;

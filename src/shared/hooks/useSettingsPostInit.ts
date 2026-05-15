@@ -108,6 +108,7 @@ export const useSettingsPostInit = ({
     if (settings["app.rich_paste_hotkey"]) setRichPasteHotkey(settings["app.rich_paste_hotkey"]);
     if (settings["app.search_hotkey"]) setSearchHotkey(settings["app.search_hotkey"]);
     if (settings["app.sequential_mode"] !== undefined) setSequentialModeState(settings["app.sequential_mode"] === 'true');
+    if (settings["app.quick_paste_enabled"] !== undefined) setQuickPasteEnabled(settings["app.quick_paste_enabled"] === 'true');
 
     if (settings["app.sound_enabled"] !== undefined) setSoundEnabled(settings["app.sound_enabled"] === 'true');
     if (settings["app.sound_volume"] !== undefined) {
