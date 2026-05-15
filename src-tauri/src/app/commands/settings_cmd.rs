@@ -195,6 +195,9 @@ pub fn save_setting(
         "app.sequential_mode" => {
             settings_state.sequential_mode.store(value == "true", Ordering::Relaxed);
         },
+        "app.quick_paste_enabled" => {
+            settings_state.quick_paste_enabled.store(value == "true", Ordering::Relaxed);
+        },
         "app.sound_enabled" => {
             settings_state.sound_enabled.store(value == "true", Ordering::Relaxed);
         },

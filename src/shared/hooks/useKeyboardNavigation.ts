@@ -71,8 +71,11 @@ export const useKeyboardNavigation = ({
       ) {
         if (action === "escape") {
           invoke("hide_window_cmd").catch(console.error);
+        } else if (action.startsWith("quick-paste:")) {
+          // Allow quick paste even if settings are open
+        } else {
+          return;
         }
-        return;
       }
 
       if (action === "up" || action === "down") {
