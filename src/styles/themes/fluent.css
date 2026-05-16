@@ -7,9 +7,9 @@
 .dark-mode {
   --surface-color-rgb: 32, 32, 32;
   
-  --bg-window: rgba(var(--surface-color-rgb), 0.95);
-  --bg-content: rgba(var(--surface-color-rgb), 0.77);
-  --bg-toolbar: rgba(var(--surface-color-rgb), 0.77);
+  --bg-window: rgba(var(--surface-color-rgb), 0.96);
+  --bg-content: rgba(var(--surface-color-rgb), 0.85);
+  --bg-toolbar: rgba(var(--surface-color-rgb), 0.85);
   --bg-panel: rgba(45, 45, 45, 0.4);
   --bg-input: rgba(255, 255, 255, 0.06);
   --bg-element: rgba(255, 255, 255, 0.04);

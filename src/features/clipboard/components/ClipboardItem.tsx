@@ -442,7 +442,7 @@ const ClipboardItem = ({
             compactPreviewPendingShow = true; compactPreviewPendingAnchor = anchor;
             await previewWindow.emit("compact-preview-update", { contentType: item.content_type, content: item.content, preview: item.preview, htmlContent: item.html_content, sourceApp: item.source_app, timestamp: item.timestamp, language, theme: "fluent", colorMode, richTextSnapshotPreview });
             if (compactPreviewPendingTimer) clearTimeout(compactPreviewPendingTimer);
-            compactPreviewPendingTimer = setTimeout(async () => { if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) return; try { await placeAndShowPendingCompactPreview(320, 220, { keepPending: true }); } catch (err) {} }, 200);
+            compactPreviewPendingTimer = setTimeout(async () => { if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) return; try { await placeAndShowPendingCompactPreview(320, 220, { keepPending: true }); } catch (err) {} }, 50);
         } catch (err) { compactPreviewWindow = null; compactPreviewMounted = false; compactPreviewMountedPromise = null; }
     };
 
@@ -478,7 +478,7 @@ const ClipboardItem = ({
             }}
             onClick={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); onCopy(false); onSelect(); }}
             onContextMenu={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); e.preventDefault(); onCopy(true); onSelect(); }}
-            onMouseEnter={(e) => { if (!canShowCompactPreview) return; hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 1000); }}
+            onMouseEnter={(e) => { if (!canShowCompactPreview) return; hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 450); }}
             onMouseMove={(e) => { if (canShowCompactPreview) hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; }}
             onMouseLeave={() => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void hideCompactPreviewGlobal(); }}
         >

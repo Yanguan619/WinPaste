@@ -8,8 +8,8 @@ export const getTagColor = (tag: string, _theme: string = "fluent") => {
   }
 
   const hue = Math.abs((hash * 137.508 + (hash >> 3)) % 360);
-  // Modern Fluent Design: Subtle but distinct
-  return `hsl(${hue}, 70%, 65%)`;
+  // Modern Fluent Design: Subtle but distinct, semi-transparent to match Mica
+  return `hsla(${hue}, 55%, 55%, 0.75)`;
 };
 
 export const getConciseTime = (timestamp: number, language: Locale) => {
