@@ -16,6 +16,16 @@ body.sticky-window #root {
     height: 100vh !important;
 }
 
+/* Hide scrollbar on content area — global ::-webkit-scrollbar width reserves layout space
+   even when the scrollbar is invisible, causing text to appear off-center */
+.sticky-content {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.sticky-content::-webkit-scrollbar {
+    display: none;
+}
+
 /* Toolbar button hover */
 .sticky-toolbar-btn:hover {
     background: var(--bg-button-hover, rgba(128,128,128,0.15)) !important;

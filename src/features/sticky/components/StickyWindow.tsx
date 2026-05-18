@@ -234,6 +234,7 @@ export default function StickyWindow() {
             </div>
 
             <div
+                className="sticky-content"
                 style={{
                     flex: 1, overflow: "auto",
                     padding: "40px 12px 12px 12px",
