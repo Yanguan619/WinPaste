@@ -22,6 +22,7 @@ interface SettingsState {
   followMouse: boolean;
   followCaret: boolean;
   arrowKeySelection: boolean;
+  stickyEnabled: boolean;
   soundEnabled: boolean;
   soundVolume: number;
   pasteSoundEnabled: boolean;
@@ -77,6 +78,7 @@ interface SettingsState {
   setFollowMouse: (enabled: boolean) => void;
   setFollowCaret: (enabled: boolean) => void;
   setArrowKeySelection: (enabled: boolean) => void;
+  setStickyEnabled: (enabled: boolean) => void;
   setSoundEnabled: (enabled: boolean) => void;
   setSoundVolume: (volume: number) => void;
   setPasteSoundEnabled: (enabled: boolean) => void;
@@ -126,6 +128,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   followMouse: true,
   followCaret: false,
   arrowKeySelection: true,
+  stickyEnabled: true,
   soundEnabled: false,
   soundVolume: 70,
   pasteSoundEnabled: true,
@@ -172,6 +175,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setFollowMouse: (followMouse) => set({ followMouse }),
   setFollowCaret: (followCaret) => set({ followCaret }),
   setArrowKeySelection: (arrowKeySelection) => set({ arrowKeySelection }),
+  setStickyEnabled: (stickyEnabled) => set({ stickyEnabled }),
   setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
   setSoundVolume: (soundVolume) => set({ soundVolume }),
   setPasteSoundEnabled: (pasteSoundEnabled) => set({ pasteSoundEnabled }),

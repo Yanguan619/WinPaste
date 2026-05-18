@@ -4,7 +4,8 @@
   "description": "Capability for the main window",
   "windows": [
     "main",
-    "compact-preview"
+    "compact-preview",
+    "sticky-*"
   ],
   "permissions": [
     "core:default",
@@ -32,6 +33,9 @@
     "core:webview:allow-create-webview-window",
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-set-focusable",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-outer-position",
     "core:path:default",
     "fs:default",
     "fs:read-all",

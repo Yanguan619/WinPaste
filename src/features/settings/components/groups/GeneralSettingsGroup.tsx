@@ -39,6 +39,8 @@ interface GeneralSettingsGroupProps {
     setTagManagerEnabled: (val: boolean) => void;
     arrowKeySelection: boolean;
     setArrowKeySelection: (val: boolean) => void;
+    stickyEnabled: boolean;
+    onToggleSticky: (enabled: boolean) => void;
     saveAppSetting: (key: string, val: string) => void;
 }
 
@@ -69,6 +71,8 @@ const GeneralSettingsGroup = ({
     setScrollTopButtonEnabled,
     tagManagerEnabled,
     setTagManagerEnabled,
+    stickyEnabled,
+    onToggleSticky,
     saveAppSetting
 }: GeneralSettingsGroupProps) => (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
@@ -240,6 +244,22 @@ const GeneralSettingsGroup = ({
                     </div>
                 )}
 
+                <div className="setting-item">
+                    <LabelWithHint
+                        label={t('sticky_enabled') || "贴图功能"}
+                        hint={t('sticky_enabled_hint') || ""}
+                        hintKey="sticky_enabled"
+                    />
+                    <label className="switch">
+                        <input
+                            className="cb"
+                            type="checkbox"
+                            checked={stickyEnabled}
+                            onChange={(e) => onToggleSticky(e.target.checked)}
+                        />
+                        <div className="toggle"><div className="left" /><div className="right" /></div>
+                    </label>
+                </div>
 
                 <div className="setting-item">
                     <LabelWithHint

@@ -9,6 +9,7 @@ use crate::database::{self, DbState};
 use crate::infrastructure::repository::clipboard_repo::SqliteClipboardRepository;
 use crate::infrastructure::repository::settings_repo::{SqliteSettingsRepository, SettingsRepository};
 use crate::infrastructure::repository::tag_repo::SqliteTagRepository;
+use crate::infrastructure::repository::sticky_repo::SqliteStickyRepository;
 use crate::services::encryption_queue::init_encryption_queue;
 use crate::services::sensitive_align::spawn_sensitive_alignment;
 use crate::infrastructure::windows_ext::WindowExt;
@@ -232,7 +233,8 @@ fn setup_state(app: &App, conn_arc: std::sync::Arc<std::sync::Mutex<rusqlite::Co
     let repo = SqliteClipboardRepository::new(conn_arc.clone());
     let settings_repo = SqliteSettingsRepository::new(conn_arc.clone());
     let tag_repo = SqliteTagRepository::new(conn_arc.clone());
-    app.manage(DbState { conn: conn_arc, repo, settings_repo, tag_repo });
+    let sticky_repo = SqliteStickyRepository::new(conn_arc.clone());
+    app.manage(DbState { conn: conn_arc, repo, settings_repo, tag_repo, sticky_repo });
     
     app.manage(SettingsState {
         deduplicate: AtomicBool::new(s.deduplicate),

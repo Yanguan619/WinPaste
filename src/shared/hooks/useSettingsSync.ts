@@ -11,6 +11,7 @@ interface UseSettingsSyncOptions {
   persistent: boolean;
   soundVolume: number;
   vibrancyEnabled: boolean;
+  stickyEnabled: boolean;
   arrowKeySelection: boolean;
   setIsKeyboardMode: Dispatch<SetStateAction<boolean>>;
   setSelectedIndex: Dispatch<SetStateAction<number>>;
@@ -26,6 +27,7 @@ export const useSettingsSync = ({
   persistent,
   soundVolume,
   vibrancyEnabled,
+  stickyEnabled,
   arrowKeySelection,
   setIsKeyboardMode,
   setSelectedIndex,
@@ -69,6 +71,11 @@ export const useSettingsSync = ({
     if (!settingsLoaded) return;
     saveAppSetting('color_mode', colorMode);
   }, [colorMode, settingsLoaded, saveAppSetting]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    saveAppSetting('sticky_enabled', stickyEnabled.toString());
+  }, [stickyEnabled, settingsLoaded, saveAppSetting]);
 
   useEffect(() => {
     if (!settingsLoaded) return;

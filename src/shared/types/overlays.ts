@@ -8,4 +8,5 @@ export type ConfirmDialogState = {
   title: string;
   message: string;
   onConfirm: () => void;
+  onCancel?: () => void;
 };

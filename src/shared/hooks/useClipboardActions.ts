@@ -13,6 +13,7 @@ interface UseClipboardActionsOptions {
   setSearch: (val: string) => void;
   setHistory: Dispatch<SetStateAction<ClipboardEntry[]>>;
   virtualListRef: RefObject<VirtualClipboardListHandle | null>;
+  onStickyCreated?: () => void;
 }
 
 export const useClipboardActions = ({
@@ -22,7 +23,8 @@ export const useClipboardActions = ({
   moveToTopAfterPaste,
   setSearch,
   setHistory,
-  virtualListRef
+  virtualListRef,
+  onStickyCreated
 }: UseClipboardActionsOptions) => {
   const copyToClipboard = useCallback(
     async (id: number, content: string, contentType: string, pasteWithFormat = false, isExternal?: boolean, filePreviewExists?: boolean) => {
@@ -134,6 +136,15 @@ export const useClipboardActions = ({
     [pushToast, setHistory]
   );
 
+  const createSticky = useCallback(
+    async (item: ClipboardEntry) => {
+      const { StickyManager } = await import("../../features/sticky/StickyManager");
+      await StickyManager.createSticky(item.content, item.content_type);
+      onStickyCreated?.();
+    },
+    [onStickyCreated]
+  );
+
   const handleUpdateTags = useCallback(
     async (id: number, newTags: string[]) => {
       try {
@@ -159,6 +170,7 @@ export const useClipboardActions = ({
     openContent,
     deleteEntry,
     togglePin,
+    createSticky,
     handleUpdateTags
   };
 };

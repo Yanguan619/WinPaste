@@ -132,6 +132,8 @@ export const useSettingsPanelProps = ({
     setClipboardItemFontSize: state.setClipboardItemFontSize,
     clipboardTagFontSize: state.clipboardTagFontSize,
     setClipboardTagFontSize: state.setClipboardTagFontSize,
+    stickyEnabled: state.stickyEnabled,
+    onToggleSticky: state.onToggleSticky,
     tagManagerEnabled: state.tagManagerEnabled,
     setTagManagerEnabled: state.setTagManagerEnabled,
     isRecording: state.isRecording,

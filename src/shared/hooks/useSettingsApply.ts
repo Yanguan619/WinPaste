@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 type PlatformInfo = {
   platform: string;
   is_windows_10: boolean;
@@ -63,6 +64,9 @@ export const useSettingsApply = ({
         show_app_border: showAppBorder,
         vibrancy_enabled: vibrancyEnabled
       }).catch(console.error);
+
+      // Notify sticky windows of the theme change
+      emit("theme-changed", { colorMode: actualMode }).catch(() => {});
     };
 
     updateColorMode();

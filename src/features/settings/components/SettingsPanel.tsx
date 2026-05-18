@@ -59,6 +59,8 @@ export interface SettingsPanelProps {
     setTagManagerEnabled: (val: boolean) => void;
     arrowKeySelection: boolean;
     setArrowKeySelection: (val: boolean) => void;
+    stickyEnabled: boolean;
+    onToggleSticky: (enabled: boolean) => void;
     vibrancyEnabled: boolean;
     setVibrancyEnabled: (val: boolean) => void;
     colorMode: 'dark' | 'light' | 'system';
@@ -164,6 +166,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         setLanguage, showAppBorder, setShowAppBorder, showSourceAppIcon, setShowSourceAppIcon, compactMode, setCompactMode, checkHotkeyConflict,
         clipboardItemFontSize, setClipboardItemFontSize, clipboardTagFontSize, setClipboardTagFontSize,
         tagManagerEnabled, setTagManagerEnabled,
+        stickyEnabled, onToggleSticky,
         setShowAppSelector, handleResetSettings,
     } = props;
 
@@ -253,6 +256,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setScrollTopButtonEnabled={setScrollTopButtonEnabled}
                 tagManagerEnabled={tagManagerEnabled}
                 setTagManagerEnabled={setTagManagerEnabled}
+                stickyEnabled={stickyEnabled}
+                onToggleSticky={onToggleSticky}
                 arrowKeySelection={arrowKeySelection}
                 setArrowKeySelection={setArrowKeySelection}
                 saveAppSetting={saveAppSetting}

@@ -8,6 +8,7 @@ pub use crate::domain::models::ClipboardEntry;
 use crate::infrastructure::repository::clipboard_repo::SqliteClipboardRepository;
 use crate::infrastructure::repository::settings_repo::SqliteSettingsRepository;
 use crate::infrastructure::repository::tag_repo::SqliteTagRepository;
+use crate::infrastructure::repository::sticky_repo::SqliteStickyRepository;
 use std::sync::{Arc, Mutex};
 
 pub struct DbState {
@@ -15,6 +16,7 @@ pub struct DbState {
     pub repo: SqliteClipboardRepository,
     pub settings_repo: SqliteSettingsRepository,
     pub tag_repo: SqliteTagRepository,
+    pub sticky_repo: SqliteStickyRepository,
 }
 
 const SENSITIVE_KEYS: &[&str] = &[
@@ -193,6 +195,10 @@ pub fn seed_defaults(conn: &Connection) -> Result<()> {
     );
     let _ = conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.search_hotkey', '')",
+        [],
+    );
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.sticky_enabled', 'true')",
         [],
     );
     let _ = conn.execute(

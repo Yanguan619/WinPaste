@@ -9,7 +9,8 @@ export const useSettingsInit = () => {
     setHotkey,
     setCompactMode,
     setLanguage,
-    setColorMode
+    setColorMode,
+    setStickyEnabled
   } = useSettingsStore();
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export const useSettingsInit = () => {
             setCompactMode(res["app.compact_mode"] === 'true');
             try { localStorage.setItem('winpaste_compact_mode', res["app.compact_mode"]); } catch(e) {}
         }
+        if (res["app.sticky_enabled"]) setStickyEnabled(res["app.sticky_enabled"] === "true");
         if (res["app.color_mode"]) {
           setColorMode(res["app.color_mode"] as 'dark' | 'light' | 'system');
         }

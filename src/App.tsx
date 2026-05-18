@@ -103,6 +103,7 @@ const App = () => {
     clipboardItemFontSize,
     clipboardTagFontSize,
     setAutoStart,
+    stickyEnabled,
     arrowKeySelection,
     soundEnabled,
     soundVolume,
@@ -234,7 +235,15 @@ const App = () => {
   );
 
   const [dbTags, setDbTags] = useState<string[]>([]);
-  
+  const [stickyEntries, setStickyEntries] = useState<any[]>([]);
+
+  const fetchStickies = useCallback(async () => {
+    try {
+      const entries = await invoke<any[]>("get_all_stickies");
+      setStickyEntries(entries || []);
+    } catch (_) {}
+  }, []);
+
   useEffect(() => {
     let unlisteners: (() => void)[] = [];
     const setupListeners = async () => {
@@ -394,6 +403,31 @@ const App = () => {
     fetchHistory();
   }, [fetchHistory]);
 
+  // Restore persisted sticky windows on startup
+  useEffect(() => {
+    const restore = async () => {
+      try {
+        const stickies = await invoke<any[]>("get_all_stickies");
+        setStickyEntries(stickies || []);
+        if (stickies && stickies.length > 0) {
+          const { StickyManager } = await import("./features/sticky/StickyManager");
+          await StickyManager.restoreAllStickies(stickies);
+        }
+      } catch (err) {
+        console.error("Failed to restore stickies:", err);
+      }
+    };
+    restore();
+  }, []);
+
+  // Listen for sticky windows closing themselves (emits "sticky-closed")
+  useEffect(() => {
+    const unlisten = listen("sticky-closed", () => {
+      fetchStickies();
+    });
+    return () => { unlisten.then((u) => u()); };
+  }, [fetchStickies]);
+
   useEffect(() => {
     if (settingsLoaded) {
       fetchHistory(true);
@@ -435,6 +469,7 @@ const App = () => {
     soundVolume,
     vibrancyEnabled,
     colorMode,
+    stickyEnabled,
     arrowKeySelection,
     setIsKeyboardMode: setIsKeyboardMode as any,
     setSelectedIndex: setSelectedIndexAdapter
@@ -471,7 +506,7 @@ const App = () => {
 
   useNavigationSync({ showSettings, showTagManager: effectiveShowTagManager });
 
-  const { copyToClipboard, openContent, deleteEntry, togglePin, handleUpdateTags } =
+  const { copyToClipboard, openContent, deleteEntry, togglePin, createSticky, handleUpdateTags } =
     useClipboardActions({
       t,
       pushToast,
@@ -479,10 +514,11 @@ const App = () => {
       moveToTopAfterPaste,
       setSearch: setSearch as any,
       setHistory: setHistoryAdapter,
-      virtualListRef
+      virtualListRef,
+      onStickyCreated: fetchStickies
     });
 
-  const { clearHistory, handleResetSettings } = useAppActions({
+  const { clearHistory, clearStickies, handleResetSettings } = useAppActions({
     t,
     openConfirm,
     closeConfirm,
@@ -553,6 +589,7 @@ const App = () => {
     openContent,
     togglePin,
     deleteEntry,
+    createSticky: stickyEnabled ? createSticky : undefined as any,
     setEditingTagsId: setEditingTagsId as any,
     tagInput: tagInput,
     setTagInput: setTagInput as any,
@@ -572,7 +609,31 @@ const App = () => {
     saveAppSetting,
     handleResetSettings,
     toggleGroup,
-    state: { ...settingsState, ...historyState, ...uiState } as any
+    state: {
+      ...settingsState,
+      ...historyState,
+      ...uiState,
+      onToggleSticky: (enabled: boolean) => {
+        if (!enabled && stickyEntries.length > 0) {
+          openConfirm({
+            title: t("clear_stickies_title"),
+            message: t("clear_stickies_confirm"),
+            onConfirm: async () => {
+              try { await invoke("clear_all_stickies"); setStickyEntries([]); } catch (_) {}
+              settingsState.setStickyEnabled(false);
+              await invoke("save_setting", { key: "app.sticky_enabled", value: "false" });
+              closeConfirm();
+            },
+            onCancel: () => {
+              settingsState.setStickyEnabled(true);
+            },
+          });
+        } else {
+          settingsState.setStickyEnabled(enabled);
+          invoke("save_setting", { key: "app.sticky_enabled", value: String(enabled) });
+        }
+      },
+    } as any
   });
 
   return (
@@ -582,6 +643,7 @@ const App = () => {
         searchInputRef={searchInputRef}
         allTags={allTags}
         clearHistory={clearHistory}
+        clearStickies={stickyEnabled ? clearStickies : undefined}
       />
 
       <main
@@ -600,6 +662,9 @@ const App = () => {
           renderItemContent={renderItemContent}
           loadMoreHistory={loadMoreHistory}
           handleListScroll={handleListScroll}
+          stickyEntries={stickyEntries}
+          onStickyRemoved={fetchStickies}
+          stickyEnabled={stickyEnabled}
           showScrollTop={showScrollTopVisible}
           onScrollTop={handleScrollTop}
         />

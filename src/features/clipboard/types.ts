@@ -15,6 +15,7 @@ export interface ClipboardItemProps {
   onTagInput: (val: string) => void;
   onTagAdd: () => void;
   onTagDelete: (tag: string) => void;
+  onStickyCreate?: (e: MouseEvent) => void;
   dragControls?: DragControls;
   id?: string;
   disableLayout?: boolean;

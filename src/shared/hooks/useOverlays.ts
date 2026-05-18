@@ -5,7 +5,8 @@ const emptyConfirm: ConfirmDialogState = {
   show: false,
   title: "",
   message: "",
-  onConfirm: () => {}
+  onConfirm: () => {},
+  onCancel: undefined,
 };
 
 export const useOverlays = () => {
@@ -24,19 +25,23 @@ export const useOverlays = () => {
   }, []);
 
   const openConfirm = useCallback(
-    (opts: { title: string; message: string; onConfirm: () => void }) => {
+    (opts: { title: string; message: string; onConfirm: () => void; onCancel?: () => void }) => {
       setConfirmDialog({
         show: true,
         title: opts.title,
         message: opts.message,
-        onConfirm: opts.onConfirm
+        onConfirm: opts.onConfirm,
+        onCancel: opts.onCancel,
       });
     },
     []
   );
 
   const closeConfirm = useCallback(() => {
-    setConfirmDialog((prev) => ({ ...prev, show: false }));
+    setConfirmDialog((prev) => {
+      prev.onCancel?.();
+      return { ...prev, show: false };
+    });
   }, []);
 
   return {

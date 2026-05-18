@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps, RefObject, ReactNode } from "react";
 import { motion, Reorder, useDragControls, AnimatePresence } from "framer-motion";
 import type { DragControls } from "framer-motion";
-import { ArrowUp, Clipboard } from "lucide-react";
+import { ArrowUp, Clipboard, X } from "lucide-react";
+import type { StickyEntry } from "../../../shared/types/sticky";
+import { StickyManager } from "../../sticky/StickyManager";
 import SettingsPanel from "../../settings/components/SettingsPanel";
 import TagManager from "../../tag/components/TagManager";
 import { VirtualClipboardList } from "../../clipboard/components/VirtualClipboardList";
@@ -33,6 +35,9 @@ interface AppMainContentProps {
   handleListScroll: (offset: number) => void;
   showScrollTop: boolean;
   onScrollTop: () => void;
+  stickyEntries?: StickyEntry[];
+  onStickyRemoved?: () => void;
+  stickyEnabled?: boolean;
 }
 
 const SortableItem = ({
@@ -84,7 +89,10 @@ const AppMainContent = ({
   loadMoreHistory,
   handleListScroll,
   showScrollTop,
-  onScrollTop
+  onScrollTop,
+  stickyEntries,
+  onStickyRemoved,
+  stickyEnabled
 }: AppMainContentProps) => {
   const {
     showSettings,
@@ -111,6 +119,9 @@ const AppMainContent = ({
   const pinnedOrderRef = useRef<number[]>(pinnedItems.map((item) => item.id));
   const [isDraggingPinned, setIsDraggingPinned] = useState(false);
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(false);
+  const [isStickyExpanded, setIsStickyExpanded] = useState(false);
+
+  const hasStickies = stickyEnabled && stickyEntries && stickyEntries.length > 0;
 
   useEffect(() => {
     if (isDraggingPinned) return;
@@ -234,7 +245,40 @@ const AppMainContent = ({
             selectedIndex={selectedIndex - pinnedItems.length}
             isKeyboardMode={isKeyboardMode}
             header={
-              pinnedItems.length > 0 ? (
+              <div style={{ marginBottom: (hasStickies || pinnedItems.length > 0) ? 8 : 0 }}>
+                {hasStickies && (
+                  <div style={{ marginBottom: pinnedItems.length > 0 ? 6 : 0 }}>
+                    <div
+                      onClick={() => setIsStickyExpanded(!isStickyExpanded)}
+                      style={{ padding: "6px 12px", fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", userSelect: "none",'marginBottom': '10px' }}
+                    >
+                      <span style={{ transform: isStickyExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'inline-block' }}>▶</span>
+                      {t('sticky_title') || '贴图记录'} ({stickyEntries!.length})
+                    </div>
+                    {isStickyExpanded && (
+                      <div style={{ padding: "0 0 4px 0", display: "flex", flexDirection: "column", gap: "4px" }}>
+                        {stickyEntries!.map((entry) => (
+                          <div key={entry.id} style={{ width: "calc(100% - 12px)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 6, background: "var(--bg-element)", fontSize: 12, color: "var(--text-secondary)" }}>
+                            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              [{entry.content_type === "image" ? "图片" : "文字"}] {entry.content_type === "image" ? "" : (entry.content?.substring(0, 40) + (entry.content?.length > 40 ? "..." : ""))}
+                            </span>
+                            <button
+                              className="btn-icon"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await StickyManager.closeSticky(entry.id);
+                                onStickyRemoved?.();
+                              }}
+                              title="取消贴图"
+                              style={{ width: 24, height: 24, minWidth: 24 }}
+                            ><X size={14} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {pinnedItems.length > 0 ? (
                 pinnedCollapsed ? (
                   <div style={{ marginBottom: "8px" }}>
                     <div
@@ -297,7 +341,8 @@ const AppMainContent = ({
                     ))}
                   </Reorder.Group>
                 )
-              ) : null
+              ) : null}
+              </div>
             }
             renderItem={(item, index, isFirst?: boolean) => {
               const absoluteIndex = pinnedItems.length + index;

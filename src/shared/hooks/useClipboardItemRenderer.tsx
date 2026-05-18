@@ -18,6 +18,7 @@ interface UseClipboardItemRendererOptions {
   openContent: (item: ClipboardEntry) => void;
   togglePin: (event: MouseEvent, id: number, isPinned: boolean) => void;
   deleteEntry: (event: MouseEvent, id: number) => void;
+  createSticky: (item: ClipboardEntry) => void;
   setEditingTagsId: Dispatch<SetStateAction<number | null>>;
   tagInput: string;
   setTagInput: Dispatch<SetStateAction<string>>;
@@ -39,6 +40,7 @@ export const useClipboardItemRenderer = ({
   openContent,
   togglePin,
   deleteEntry,
+  createSticky,
   setEditingTagsId,
   tagInput,
   setTagInput,
@@ -78,6 +80,7 @@ export const useClipboardItemRenderer = ({
           }}
           onTogglePin={(e) => togglePin(e, item.id, item.is_pinned)}
           onDelete={(e) => deleteEntry(e, item.id)}
+          onStickyCreate={createSticky ? (e: MouseEvent) => { e.stopPropagation(); createSticky(item); } : undefined}
           onToggleTagEditor={(e) => {
             e.stopPropagation();
             console.log('Toggling tag editor for item:', item.id);
@@ -115,6 +118,7 @@ export const useClipboardItemRenderer = ({
       openContent,
       togglePin,
       deleteEntry,
+      createSticky,
       setEditingTagsId,
       setTagInput,
       handleUpdateTags,

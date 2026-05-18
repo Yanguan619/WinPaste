@@ -1,0 +1,22 @@
+/* Sticky window — frameless, transparent, CSS-rounded */
+body.sticky-window {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    overflow: hidden !important;
+    border-radius: 12px !important;
+}
+
+body.sticky-window #root {
+    background: transparent !important;
+    overflow: hidden !important;
+    border-radius: 12px !important;
+    display: flex !important;
+    width: 100vw !important;
+    height: 100vh !important;
+}
+
+/* Toolbar button hover */
+.sticky-toolbar-btn:hover {
+    background: var(--bg-button-hover, rgba(128,128,128,0.15)) !important;
+}

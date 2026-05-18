@@ -25,7 +25,8 @@ import {
     Files,
     ImageOff,
     FileQuestion,
-    GripVertical
+    GripVertical,
+    StickyNote
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ClipboardItemProps } from "../types";
@@ -368,6 +369,7 @@ const ClipboardItem = ({
     onTagInput,
     onTagAdd,
     onTagDelete,
+    onStickyCreate,
     dragControls,
     id,
     disableLayout,
@@ -582,6 +584,7 @@ const ClipboardItem = ({
                 <div className="item-actions">
                     {isSensitiveHidden && <button className={`btn-icon ${isRevealed ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); onToggleReveal(e); }} title={t('reveal')}><Eye size={12} /></button>}
                     {!isSensitiveHidden && (item.tags?.includes('sensitive') || item.tags?.includes('密码')) && <button className={`btn-icon active`} onClick={(e) => { e.stopPropagation(); onToggleReveal(e); }} title={t('hide')}><EyeOff size={12} /></button>}
+                    {onStickyCreate && item.content_type !== "file" && item.content_type !== "video" && <button className="btn-icon" onClick={(e) => { e.stopPropagation(); onStickyCreate(e); }} title={t('pin_to_desktop')}><StickyNote size={12} /></button>}
                     <button className={`btn-icon ${item.is_external && item.file_preview_exists === false ? 'disabled' : ''}`} onClick={(e) => { e.stopPropagation(); if (item.is_external && item.file_preview_exists === false) { onOpen(e); return; } onOpen(e); }} title={t('open')}><ExternalLink size={12} /></button>
                     <button className={`btn-icon ${item.is_pinned ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); onTogglePin(e); }} title={item.is_pinned ? t('unpin') : t('pin')}>{item.is_pinned ? <PinOff size={12} /> : <Pin size={12} />}</button>
                     <button className={`btn-icon ${isEditingTags ? "active" : ""}`} onClick={(e) => { e.stopPropagation(); onToggleTagEditor(e); }} title="Tags"><Tag size={12} /></button>

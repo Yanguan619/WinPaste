@@ -176,6 +176,38 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         conn.execute("INSERT INTO schema_migrations (version) VALUES (9)", [])?;
     }
 
+    // Migration 10: Sticky windows for desktop pinning
+    if current_version < 10 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sticky_windows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                x INTEGER NOT NULL DEFAULT 0,
+                y INTEGER NOT NULL DEFAULT 0,
+                width INTEGER NOT NULL DEFAULT 400,
+                height INTEGER NOT NULL DEFAULT 300,
+                always_on_top INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );",
+        )?;
+        // Ensure sticky feature is enabled by default for existing users
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.sticky_enabled', 'true')",
+            [],
+        )?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (10)", [])?;
+    }
+
+    // Migration 11: Ensure sticky_enabled is on for users who got the false default
+    if current_version < 11 {
+        conn.execute(
+            "UPDATE settings SET value = 'true' WHERE key = 'app.sticky_enabled' AND value = 'false'",
+            [],
+        )?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])?;
+    }
+
     Ok(())
 }
 
