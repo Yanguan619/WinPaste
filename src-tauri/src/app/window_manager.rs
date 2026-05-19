@@ -451,12 +451,12 @@ pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
                 unsafe {
                     // 在抢占焦点前，精准捕获并记录当前系统前台窗口（作为粘贴的目标）
                     let fg_hwnd = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
-                    println!("[DEBUG] activate_window_focus triggered. Current Foreground: {:?}, Our Window: {:?}", fg_hwnd.0 as usize, hwnd_raw.0 as usize);
+                    crate::info!("[DEBUG] activate_window_focus triggered. Current Foreground: {:?}, Our Window: {:?}", fg_hwnd.0 as usize, hwnd_raw.0 as usize);
                     if !fg_hwnd.0.is_null() && fg_hwnd.0 != hwnd_raw.0 {
                         crate::LAST_ACTIVE_HWND.store(fg_hwnd.0 as usize, std::sync::atomic::Ordering::Relaxed);
-                        println!("[DEBUG] LAST_ACTIVE_HWND successfully updated to: {:?}", fg_hwnd.0 as usize);
+                        crate::info!("[DEBUG] LAST_ACTIVE_HWND successfully updated to: {:?}", fg_hwnd.0 as usize);
                     } else {
-                        println!("[DEBUG] LAST_ACTIVE_HWND NOT updated. Is null? {} Or is same as our window? {}", fg_hwnd.0.is_null(), fg_hwnd.0 == hwnd_raw.0);
+                        crate::info!("[DEBUG] LAST_ACTIVE_HWND NOT updated. Is null? {} Or is same as our window? {}", fg_hwnd.0.is_null(), fg_hwnd.0 == hwnd_raw.0);
                     }
 
                     let ex_style = GetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE);

@@ -199,7 +199,7 @@ impl PipelineStage for ValidationStage {
             let queue_state = ctx.app_handle.state::<PasteQueue>();
             let queue = queue_state.0.lock().unwrap();
             if queue.last_action_was_paste && queue.last_pasted_content.as_deref() == Some(&entry.content) {
-                println!("Ignoring echo paste from queue");
+                crate::info!("Ignoring echo paste from queue");
                 ctx.should_stop = true;
                 return;
             }

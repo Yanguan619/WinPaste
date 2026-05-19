@@ -57,7 +57,7 @@ fn worker(app_handle: AppHandle, rx: Receiver<EncryptionJob>) {
             };
 
             if let Err(err) = result {
-                eprintln!("encryption queue job failed (id={}): {}", job.id, err);
+                crate::error!("encryption queue job failed (id={}): {}", job.id, err);
             }
 
             drop(conn);

@@ -114,7 +114,7 @@ pub async fn paste_next_step(app_handle: tauri::AppHandle) {
             )
             .await
             {
-                eprintln!("[ERROR] Failed to prepare clipboard payload for sequential paste: {err}");
+                crate::error!("Failed to prepare clipboard payload for sequential paste: {err}");
                 let _ = app_handle.emit("queue-item-pasted", id);
                 return;
             }
@@ -164,7 +164,7 @@ pub async fn paste_next_step(app_handle: tauri::AppHandle) {
                         },
                     };
                     SendInput(&[alt_restore], std::mem::size_of::<INPUT>() as i32);
-                    println!("[DEBUG] Restored Alt key state for continuous sequential paste");
+                    crate::info!("[DEBUG] Restored Alt key state for continuous sequential paste");
                 }
             }
 

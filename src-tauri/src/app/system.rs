@@ -20,7 +20,7 @@ pub fn get_machine_id() -> String {
             hex.chars().take(8).collect()
         }
         Err(e) => {
-            eprintln!("[WARN] Failed to get machine UID: {}. Using fallback.", e);
+            crate::info!("[WARN] Failed to get machine UID: {}. Using fallback.", e);
             let mut hasher = Sha256::new();
             if let Ok(computer_name) = std::env::var("COMPUTERNAME") {
                 hasher.update(computer_name.as_bytes());
@@ -82,7 +82,7 @@ pub unsafe extern "system" fn tray_subclass_proc(
                         if settings.hide_tray_icon.load(Ordering::Relaxed) {
                             if let Some(tray) = handle.tray_by_id("main_tray") {
                                 let _ = tray.set_visible(false);
-                                println!(">>> [TRAY] Explorer restart detected, re-hiding tray icon per user setting.");
+                                crate::info!(">>> [TRAY] Explorer restart detected, re-hiding tray icon per user setting.");
                             }
                         }
                     }

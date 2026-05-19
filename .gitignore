@@ -16,7 +16,7 @@ target-codex-*/
 *.log
 *.tmp
 *.tsbuildinfo
-
+*.local.json
 # OS/editor
 .DS_Store
 Thumbs.db

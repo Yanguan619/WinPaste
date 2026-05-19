@@ -34,7 +34,7 @@ static FILE_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceL
 #[tauri::command]
 pub async fn scan_installed_apps() -> AppResult<Vec<AppInfo>> {
     let mut apps = Vec::new();
-    println!("Starting app scan...");
+    crate::info!("Starting app scan...");
     
     // 1. Add known system apps directly (Backend Fallback)
     let sys_root = std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string());

@@ -123,7 +123,7 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
                 return launch_default_handler(content).await;
             }
 
-            println!("Attempting to launch URL handler: {}", app);
+            crate::info!("Attempting to launch URL handler: {}", app);
             let ps_script = format!(
                 "Start-Process -FilePath 'shell:AppsFolder\\{}' -ArgumentList '{}'",
                 app,
@@ -139,7 +139,7 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
                 match cmd.spawn() {
                     Ok(_) => return Ok(()),
                     Err(e) => {
-                        println!("Failed to launch via powershell: {}, falling back to default", e);
+                        crate::info!("Failed to launch via powershell: {}, falling back to default", e);
                         return launch_default_handler(content).await;
                     }
                 }
@@ -247,9 +247,9 @@ async fn launch_file_with_app(
                 return launch_with_default_app(path_str, content_type, use_direct_path);
             }
 
-            println!("Attempting to launch UWP app: {} for file: {}", app, path_str);
+            crate::info!("Attempting to launch UWP app: {} for file: {}", app, path_str);
             if let Err(e) = launch_uwp_with_file(app, path_str).await {
-                println!("WinRT launch failed: {}, falling back to old method", e);
+                crate::info!("WinRT launch failed: {}, falling back to old method", e);
                 let safe_path = path_str.replace("'", "''");
                 let ps_script = format!(
                     "Start-Process -FilePath 'shell:AppsFolder\\{}' -ArgumentList '{}'",
@@ -263,7 +263,7 @@ async fn launch_file_with_app(
                     match cmd.spawn() {
                         Ok(_) => return Ok(()),
                         Err(err) => {
-                            println!("Fallback launch failed: {}, using system default", err);
+                            crate::info!("Fallback launch failed: {}, using system default", err);
                             return launch_with_default_app(path_str, content_type, use_direct_path);
                         }
                     }
@@ -347,7 +347,7 @@ fn start_file_watcher(
 
             if current_mtime != last_mtime {
                 last_mtime = current_mtime;
-                println!("File changed detected: {:?}", file_path);
+                crate::info!("File changed detected: {:?}", file_path);
 
                 if let Some((new_content, preview)) =
                     read_changed_file(&file_path, &content_type)
@@ -452,7 +452,7 @@ fn update_database_with_changes(
                     item.content_type = "text".to_string();
                 }
                 let _ = app_handle.emit("clipboard-updated", item.clone());
-                println!("Session item updated and clipboard-updated event emitted for id: {}", id);
+                crate::info!("Session item updated and clipboard-updated event emitted for id: {}", id);
                 return;
             }
         }
@@ -477,10 +477,10 @@ fn update_database_with_changes(
 
         if let Ok(Some(updated_entry)) = state.repo.get_entry_by_id(id) {
             let _ = app_handle.emit("clipboard-updated", updated_entry);
-            println!("Database updated and clipboard-updated event emitted for id: {}", id);
+            crate::info!("Database updated and clipboard-updated event emitted for id: {}", id);
         } else {
             let _ = app_handle.emit("clipboard-changed", id);
-            println!("Database updated for id: {}", id);
+            crate::info!("Database updated for id: {}", id);
         }
     }
 }

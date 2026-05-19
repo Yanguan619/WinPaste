@@ -151,14 +151,18 @@ fn apply_startup_resets(repo: &impl SettingsRepository) {
     let paste_method = repo.get("app.paste_method").unwrap_or(Some("shift_insert".to_string())).unwrap_or("shift_insert".to_string());
     if paste_method == "game_mode" && !crate::app::commands::system_cmd::check_is_admin() {
         info!(">>> [STARTUP] Game Mode active without Admin privileges. Resetting to default.");
-        let _ = repo.set("app.paste_method", "shift_insert");
+        if let Err(e) = repo.set("app.paste_method", "shift_insert") {
+            crate::error!("Failed to reset paste_method: {}", e);
+        }
     }
     
     // Clear default Alt+F search hotkey to avoid conflicts for existing users
     if let Ok(Some(search_hotkey)) = repo.get("app.search_hotkey") {
         if search_hotkey == "Alt+F" {
             info!(">>> [STARTUP] Clearing default Alt+F search hotkey to prevent conflicts.");
-            let _ = repo.set("app.search_hotkey", "");
+            if let Err(e) = repo.set("app.search_hotkey", "") {
+                crate::error!("Failed to clear search_hotkey: {}", e);
+            }
         }
     }
 }
@@ -756,7 +760,7 @@ fn setup_taskbar_listener(app: &App) {
     }
 }
 
-fn normalize_shortcut_string(hk: &str) -> String {
+pub(crate) fn normalize_shortcut_string(hk: &str) -> String {
     hk.replace("Win", "Super")
         .replace("Shift+!", "Shift+1")
         .replace("Shift+@", "Shift+2")
@@ -913,8 +917,12 @@ fn persist_window_size(window: &tauri::Window, width: u32, height: u32) {
             };
 
             if let Some(db_state) = app_handle.try_state::<DbState>() {
-                let _ = db_state.settings_repo.set("app.window_width", &w.to_string());
-                let _ = db_state.settings_repo.set("app.window_height", &h.to_string());
+                if let Err(e) = db_state.settings_repo.set("app.window_width", &w.to_string()) {
+                    crate::error!("Failed to persist window_width: {}", e);
+                }
+                if let Err(e) = db_state.settings_repo.set("app.window_height", &h.to_string()) {
+                    crate::error!("Failed to persist window_height: {}", e);
+                }
             }
 
             WINDOW_SIZE_SAVE_PENDING.store(false, Ordering::SeqCst);

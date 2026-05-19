@@ -4,31 +4,7 @@ use crate::infrastructure::repository::settings_repo::SettingsRepository;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager, State};
 use crate::error::{AppResult, AppError};
-
-fn is_win_v_hotkey(hotkey: &str) -> bool {
-    let parts: Vec<String> = hotkey
-        .split('+')
-        .map(|p| p.trim().to_uppercase())
-        .filter(|p| !p.is_empty())
-        .collect();
-
-    if parts.is_empty() {
-        return false;
-    }
-
-    let mut has_win = false;
-    let mut has_v = false;
-
-    for part in &parts {
-        match part.as_str() {
-            "WIN" | "SUPER" | "COMMAND" | "META" => has_win = true,
-            "V" => has_v = true,
-            _ => return false,
-        }
-    }
-
-    has_win && has_v
-}
+use crate::app::hooks::is_win_v_hotkey;
 
 #[tauri::command]
 pub fn set_sequential_mode(app_handle: AppHandle, state: State<'_, crate::app_state::SettingsState>, enabled: bool) {

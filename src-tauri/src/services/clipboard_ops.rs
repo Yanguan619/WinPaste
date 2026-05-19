@@ -97,7 +97,7 @@ pub async fn copy_to_clipboard(
     paste_with_format: Option<bool>,
     move_to_top: Option<bool>,
 ) -> AppResult<()> {
-    println!("[DEBUG] copy_to_clipboard called: id={}, paste={}, content_type={}, content_len={}", id, paste, content_type, content.len());
+    crate::info!("[DEBUG] copy_to_clipboard called: id={}, paste={}, content_type={}, content_len={}", id, paste, content_type, content.len());
 
     let mut html_content: Option<String> = None;
 
@@ -200,7 +200,7 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
 
 async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult<()> {
     let last_hwnd_val = crate::LAST_ACTIVE_HWND.load(Ordering::Relaxed);
-    println!("[DEBUG] restore_focus_before_paste called. Target HWND = {:?}", last_hwnd_val);
+    crate::info!("[DEBUG] restore_focus_before_paste called. Target HWND = {:?}", last_hwnd_val);
     
     if last_hwnd_val == 0 {
         return Err(AppError::Internal("No last active window captured".to_string()));
@@ -213,12 +213,12 @@ async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult
         let target_hwnd = HWND(last_hwnd_val as _);
         unsafe {
             if !IsWindowVisible(target_hwnd).as_bool() {
-                 println!("[WARN] Target window is no longer visible.");
+                 crate::info!("[WARN] Target window is no longer visible.");
                  return Err(AppError::Internal("Target window is no longer visible".to_string()));
             }
 
             let fg_hwnd = GetForegroundWindow();
-            println!("[DEBUG] Before SetForegroundWindow, Current Foreground is {:?}", fg_hwnd.0 as usize);
+            crate::info!("[DEBUG] Before SetForegroundWindow, Current Foreground is {:?}", fg_hwnd.0 as usize);
             
             if fg_hwnd.0 != target_hwnd.0 {
                 use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP};
@@ -254,21 +254,21 @@ async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult
                     let _ = windows::Win32::System::Threading::AttachThreadInput(current_thread_id, fg_thread_id, false);
                 }
                 
-                println!("[DEBUG] Tried to set foreground. Attached to FG: {}, Attached to Target: {}", attached_to_fg, attached_to_target);
+                crate::info!("[DEBUG] Tried to set foreground. Attached to FG: {}, Attached to Target: {}", attached_to_fg, attached_to_target);
             } else {
-                println!("[DEBUG] Target window is already the foreground window.");
+                crate::info!("[DEBUG] Target window is already the foreground window.");
             }
         }
 
         // Wait for focus with polling instead of blind sleep
-        println!("[DEBUG] Waiting for focus to settle on target window {:?}...", target_hwnd.0 as usize);
+        crate::info!("[DEBUG] Waiting for focus to settle on target window {:?}...", target_hwnd.0 as usize);
         if !WindowExt::wait_for_focus_raw(target_hwnd.0 as usize, 300).await {
             unsafe {
                 let current_fg = GetForegroundWindow();
-                println!("[WARN] Failed to confirm focus on target window after 300ms. Current Foreground is actually {:?}", current_fg.0 as usize);
+                crate::info!("[WARN] Failed to confirm focus on target window after 300ms. Current Foreground is actually {:?}", current_fg.0 as usize);
             }
         } else {
-            println!("[DEBUG] Successfully confirmed target window is foreground!");
+            crate::info!("[DEBUG] Successfully confirmed target window is foreground!");
         }
     }
 
@@ -358,7 +358,7 @@ async fn copy_content_to_system_clipboard(
                 
                 if fallback_to_file {
                     let win_path = clean_path.replace("/", "\\");
-                    println!("[DEBUG] copy_to_clipboard: fallback_to_file for >1MB image. win_path={}", win_path);
+                    crate::info!("[DEBUG] copy_to_clipboard: fallback_to_file for >1MB image. win_path={}", win_path);
                     
                     // We must hash the EXACT string that the monitor will see!
                     // The monitor will read the backslash path from CF_HDROP.
@@ -366,12 +366,12 @@ async fn copy_content_to_system_clipboard(
                     win_path.hash(&mut hasher);
                     let hdrop_hash = hasher.finish();
                     crate::LAST_APP_SET_HASH.store(hdrop_hash, Ordering::SeqCst);
-                    println!("[DEBUG] copy_to_clipboard: SETTING LAST_APP_SET_HASH to {} for path {}", hdrop_hash, win_path);
+                    crate::info!("[DEBUG] copy_to_clipboard: SETTING LAST_APP_SET_HASH to {} for path {}", hdrop_hash, win_path);
 
                     unsafe {
                         crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(vec![win_path])
                             .map_err(|e| {
-                                println!("[ERROR] set_clipboard_files failed: {}", e);
+                                crate::info!("[ERROR] set_clipboard_files failed: {}", e);
                                 AppError::from(e)
                             })?;
                     }
@@ -587,7 +587,7 @@ fn copy_image_bytes_to_clipboard(
 async fn copy_text_with_retry(
     content: &str,
 ) -> AppResult<()> {
-    println!("[DEBUG] Copying text to clipboard: {} chars", content.len());
+    crate::info!("[DEBUG] Copying text to clipboard: {} chars", content.len());
     let mut retries = 3;
     while retries > 0 {
         let res = {
@@ -597,12 +597,12 @@ async fn copy_text_with_retry(
 
         match res {
             Ok(_) => {
-                println!("[DEBUG] Text copied to clipboard successfully");
+                crate::info!("[DEBUG] Text copied to clipboard successfully");
                 return Ok(());
             }
             Err(_e) if retries > 1 => {
                 retries -= 1;
-                println!("[DEBUG] Clipboard set failed, retrying... ({} left)", retries);
+                crate::info!("[DEBUG] Clipboard set failed, retrying... ({} left)", retries);
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
             Err(e) => return Err(AppError::Internal(format!("Clipboard error: {}", e))),
@@ -620,7 +620,7 @@ async fn perform_paste_action(
     content_type: &str,
     move_to_top: Option<bool>,
 ) -> AppResult<()> {
-    println!("[DEBUG] perform_paste_action: pinned={}", crate::WINDOW_PINNED.load(Ordering::Relaxed));
+    crate::info!("[DEBUG] perform_paste_action: pinned={}", crate::WINDOW_PINNED.load(Ordering::Relaxed));
     
     // Settling time is now mostly handled in handle_window_focus_for_paste
     // But we add a small extra buffer here to be absolutely sure the focus is solid
@@ -641,23 +641,23 @@ async fn perform_paste_action(
     }
 
     if stole_focus {
-        println!("[WARN] Clipboard window STOLE focus back, attempting one last restore...");
+        crate::info!("[WARN] Clipboard window STOLE focus back, attempting one last restore...");
         let _ = restore_focus_before_paste(app_handle).await;
     }
 
     #[cfg(target_os = "windows")]
     unsafe {
         let fg_before_paste = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
-        println!("[DEBUG] Right before sending paste keystroke, Foreground Window is {:?}", fg_before_paste.0 as usize);
+        crate::info!("[DEBUG] Right before sending paste keystroke, Foreground Window is {:?}", fg_before_paste.0 as usize);
     }
 
     // Get paste method from settings
     let paste_method = state.settings_repo.get("app.paste_method").ok().flatten().unwrap_or_else(|| "shift_insert".to_string());
 
     // Send paste keystroke
-    println!("[DEBUG] Calling send_paste_keystroke...");
+    crate::info!("[DEBUG] Calling send_paste_keystroke...");
     send_paste_keystroke(&paste_method, content, Some(content_type));
-    println!("[DEBUG] Finished sending keystrokes.");
+    crate::info!("[DEBUG] Finished sending keystrokes.");
 
     // Hide after paste if not pinned
     hide_window_after_paste(app_handle).await;
@@ -688,7 +688,7 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
 }
 
 pub fn send_paste_keystroke(method: &str, content: Option<&str>, content_type: Option<&str>) {
-    println!("[DEBUG] Sending paste keystroke using method: {}", method);
+    crate::info!("[DEBUG] Sending paste keystroke using method: {}", method);
     #[cfg(target_os = "windows")]
     unsafe {
         use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -824,7 +824,7 @@ pub fn send_paste_keystroke(method: &str, content: Option<&str>, content_type: O
                     if idx % check_interval == 0 {
                         let current_hwnd = GetForegroundWindow();
                         if current_hwnd.0 != target_hwnd.0 {
-                            println!("[WARN] Game mode paste aborted: foreground window changed");
+                            crate::info!("[WARN] Game mode paste aborted: foreground window changed");
                             break;
                         }
                     }

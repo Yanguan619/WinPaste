@@ -4,19 +4,7 @@ use crate::error::{AppResult, AppError};
 use crate::global_state::HOTKEY_STRING;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-fn normalize_shortcut_string(hk: &str) -> String {
-    hk.replace("Win", "Super")
-        .replace("Shift+!", "Shift+1")
-        .replace("Shift+@", "Shift+2")
-        .replace("Shift+#", "Shift+3")
-        .replace("Shift+$", "Shift+4")
-        .replace("Shift+%", "Shift+5")
-        .replace("Shift+^", "Shift+6")
-        .replace("Shift+&", "Shift+7")
-        .replace("Shift+*", "Shift+8")
-        .replace("Shift+(", "Shift+9")
-        .replace("Shift+)", "Shift+0")
-}
+use crate::app::setup::normalize_shortcut_string;
 
 #[tauri::command]
 pub fn register_hotkey(app_handle: AppHandle, hotkey: String) -> AppResult<()> {

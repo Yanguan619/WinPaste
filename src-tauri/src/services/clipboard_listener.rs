@@ -44,7 +44,7 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
             ) {
                 Ok(hwnd) => hwnd,
                 Err(e) => {
-                    eprintln!("[ERROR] Failed to create clipboard listener window: {:?}", e);
+                    crate::error!("Failed to create clipboard listener window: {:?}", e);
                     return;
                 }
             };
@@ -55,12 +55,12 @@ pub fn listen_clipboard(callback: Arc<dyn Fn() + Send + Sync + 'static>) {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
 
             if let Err(e) = AddClipboardFormatListener(hwnd) {
-                eprintln!("[ERROR] Failed to add clipboard listener: {:?}", e);
+                crate::error!("Failed to add clipboard listener: {:?}", e);
                 let _ = Box::from_raw(ptr);
                 return;
             }
 
-            println!(">>> [CLIPBOARD] Windows event-driven listener started.");
+            crate::info!(">>> [CLIPBOARD] Windows event-driven listener started.");
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
