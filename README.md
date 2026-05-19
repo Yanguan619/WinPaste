@@ -4,7 +4,8 @@
 
 一个快速、轻量且功能强大的 Windows 剪贴板增强工具。它能完美无缝替换系统自带的`Win+V`历史功能，让你无需学习即可上手。
 
-![](https://picui.ogmua.cn/s1/2026/03/30/69c9f3adeb429.webp)
+<img width="595" height="747" alt="image" src="https://github.com/user-attachments/assets/dfbb9b50-011a-4aab-867f-541de52c15db" />
+
 
 ------
 
