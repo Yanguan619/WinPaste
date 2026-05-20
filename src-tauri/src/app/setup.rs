@@ -355,10 +355,12 @@ fn start_services(app: &App, s: &StartupSettings, app_handle: AppHandle) {
         }
     }
 
-    // Win+V Optimization
+    // Win+V Optimization: sync DB setting with actual registry state.
+    // If registry was cleaned (e.g., by uninstall), reset DB to false so the
+    // toggle reflects reality instead of showing ON while not actually working.
     if db_state.settings_repo.get("app.use_win_v_shortcut").unwrap_or(Some("false".to_string())) == Some("true".to_string()) {
         if !crate::app::commands::system_cmd::get_registry_win_v_optimized_status() {
-            let _ = crate::app::commands::trigger_registry_win_v_optimization(true);
+            let _ = db_state.settings_repo.set("app.use_win_v_shortcut", "false");
         }
     }
 }

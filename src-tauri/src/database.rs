@@ -198,7 +198,7 @@ pub fn seed_defaults(conn: &Connection) -> Result<()> {
         [],
     );
     let _ = conn.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.sticky_enabled', 'true')",
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.sticky_enabled', 'false')",
         [],
     );
     let _ = conn.execute(
