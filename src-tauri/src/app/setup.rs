@@ -335,10 +335,12 @@ fn start_services(app: &App, s: &StartupSettings, app_handle: AppHandle) {
         let _ = crate::app::commands::register_hotkey(app_handle.clone(), hotkey_str);
     }
     
-    // Sequential Hotkey
+    // Sequential Hotkey (only register when mode is enabled)
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-    if let Ok(shortcut) = normalize_shortcut_string(&s.sequential_hotkey).parse::<Shortcut>() {
-        let _ = app.global_shortcut().register(shortcut);
+    if s.sequential_mode {
+        if let Ok(shortcut) = normalize_shortcut_string(&s.sequential_hotkey).parse::<Shortcut>() {
+            let _ = app.global_shortcut().register(shortcut);
+        }
     }
 
     // Rich Paste Hotkey

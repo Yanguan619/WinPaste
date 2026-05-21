@@ -11,6 +11,19 @@ pub fn set_sequential_mode(app_handle: AppHandle, state: State<'_, crate::app_st
     state.sequential_mode.store(enabled, Ordering::Relaxed);
     let db_state = app_handle.state::<DbState>();
     let _ = db_state.settings_repo.set("app.sequential_mode", &enabled.to_string());
+
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let seq_hotkey = state.sequential_paste_hotkey.lock().unwrap().clone();
+    if !seq_hotkey.is_empty() {
+        let normalized = seq_hotkey.replace("Win", "Super");
+        if let Ok(shortcut) = normalized.parse::<Shortcut>() {
+            if enabled {
+                let _ = app_handle.global_shortcut().register(shortcut);
+            } else {
+                let _ = app_handle.global_shortcut().unregister(shortcut);
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -27,9 +40,11 @@ pub fn set_sequential_hotkey(
         *guard = hotkey.clone();
     }
 
-    let normalized = hotkey.replace("Win", "Super");
-    if let Ok(shortcut) = normalized.parse::<Shortcut>() {
-        let _ = app_handle.global_shortcut().register(shortcut);
+    if state.sequential_mode.load(std::sync::atomic::Ordering::Relaxed) {
+        let normalized = hotkey.replace("Win", "Super");
+        if let Ok(shortcut) = normalized.parse::<Shortcut>() {
+            let _ = app_handle.global_shortcut().register(shortcut);
+        }
     }
 
     let main_hotkey = {
@@ -84,7 +99,7 @@ pub fn set_rich_paste_hotkey(
     }
 
     let seq_hotkey = state.sequential_paste_hotkey.lock().unwrap().clone();
-    if !seq_hotkey.is_empty() {
+    if !seq_hotkey.is_empty() && state.sequential_mode.load(Ordering::Relaxed) {
         let seq_normalized = seq_hotkey.replace("Win", "Super");
         if let Ok(shortcut) = seq_normalized.parse::<Shortcut>() {
             let _ = app_handle.global_shortcut().register(shortcut);
@@ -131,7 +146,7 @@ pub fn set_search_hotkey(
     }
 
     let seq_hotkey = state.sequential_paste_hotkey.lock().unwrap().clone();
-    if !seq_hotkey.is_empty() {
+    if !seq_hotkey.is_empty() && state.sequential_mode.load(Ordering::Relaxed) {
         let seq_normalized = seq_hotkey.replace("Win", "Super");
         if let Ok(shortcut) = seq_normalized.parse::<Shortcut>() {
             let _ = app_handle.global_shortcut().register(shortcut);
@@ -392,7 +407,8 @@ pub fn reset_settings(
     if !main_hotkey.is_empty() && !is_win_v_hotkey(&main_hotkey) {
         if let Ok(shortcut) = main_hotkey.replace("Win", "Super").parse::<Shortcut>() { let _ = app.global_shortcut().register(shortcut); }
     }
-    if !seq_hotkey.is_empty() {
+    let seq_mode = settings_state.sequential_mode.load(Ordering::Relaxed);
+    if seq_mode && !seq_hotkey.is_empty() {
         if let Ok(shortcut) = seq_hotkey.replace("Win", "Super").parse::<Shortcut>() { let _ = app.global_shortcut().register(shortcut); }
     }
     if !rich_hotkey.is_empty() {

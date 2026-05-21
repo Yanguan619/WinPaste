@@ -51,7 +51,10 @@ pub fn register_hotkey(app_handle: AppHandle, hotkey: String) -> AppResult<()> {
     };
 
     let settings = app_handle.state::<SettingsState>();
-    register_other(settings.sequential_paste_hotkey.lock().unwrap().clone(), "sequential");
+    let seq_mode = settings.sequential_mode.load(std::sync::atomic::Ordering::Relaxed);
+    if seq_mode {
+        register_other(settings.sequential_paste_hotkey.lock().unwrap().clone(), "sequential");
+    }
     register_other(settings.rich_paste_hotkey.lock().unwrap().clone(), "rich");
     register_other(settings.search_hotkey.lock().unwrap().clone(), "search");
     
