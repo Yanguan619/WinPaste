@@ -874,6 +874,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             }
             api.prevent_close();
             let _ = window.hide();
+            let _ = window.app_handle().emit("window-hidden", ());
             NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
             NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
         }
@@ -962,6 +963,7 @@ fn handle_blur(window: &tauri::Window) {
         if !down && matches!(w.is_focused(), Ok(false)) {
             if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
                 let _ = w.hide();
+                let _ = w.app_handle().emit("window-hidden", ());
                 NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
                 release_win_keys();
                 let _ = restore_last_focus(w.app_handle().clone());

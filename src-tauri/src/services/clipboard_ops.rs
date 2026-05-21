@@ -680,6 +680,7 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.set_focusable(false);
         let _ = window.hide();
+        let _ = app_handle.emit("window-hidden", ());
         crate::IS_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
         crate::NAVIGATION_ENABLED.store(false, Ordering::Relaxed); // Disable navigation like hide_window_cmd does
         crate::app::window_manager::release_win_keys();

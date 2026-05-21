@@ -274,7 +274,7 @@ const ensureCompactPreviewResizeListener = async (): Promise<void> => {
 const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
     if (compactPreviewLifecycleListenersReady) { await compactPreviewLifecycleListenersReady; return; }
     compactPreviewLifecycleListenersReady = (async () => {
-        const lifecycleEvents = ["tauri://hide", "tauri://close-requested", "tauri://destroyed"];
+        const lifecycleEvents = ["tauri://hide", "tauri://close-requested", "tauri://destroyed", "window-hidden"];
         await Promise.all(lifecycleEvents.map(async (eventName) => {
             try { await listen(eventName, () => { void hideCompactPreviewGlobal(); }); } catch (err) {}
         }));

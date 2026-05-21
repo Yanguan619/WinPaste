@@ -17,6 +17,7 @@ target-codex-*/
 *.tmp
 *.tsbuildinfo
 *.local.json
+*.traineddata
 # OS/editor
 .DS_Store
 Thumbs.db
