@@ -1,10 +1,13 @@
 /* Compact Mode Styles - Final Cleanup */
 
-/* Base Item Styles */
+/*
+ * Compact mode items share the same card design language as non-compact mode:
+ * same border/border-radius/background variables — just tighter padding & spacing.
+ */
 .history-item.compact {
-    padding: 2px 10px 2px 10px !important;
-    min-height: auto;
-    height: 100% !important;
+    padding: 3px 10px 3px 10px !important;
+    height: 44px !important;
+    min-height: 44px !important;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -12,7 +15,12 @@
     gap: 0;
     overflow: visible !important;
     z-index: 1;
-    margin-bottom: 0 !important;
+    /* Denser card: same variables as non-compact, smaller gap, lighter shadow */
+    margin-bottom: 3px !important;
+    border: var(--card-border) !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
 }
 
 /* Add extra padding when drag handle is present to avoid overlap */
@@ -22,28 +30,42 @@
 
 .history-item.compact:hover {
     z-index: 100 !important;
-    background: var(--bg-element);
+    background: var(--bg-input) !important;
+    border-color: var(--card-hover-border-color) !important;
+    box-shadow: var(--card-hover-shadow) !important;
 }
 
-/* Hide Meta Header (Source App, Icon) */
-.history-item.compact .item-meta {
+/* Hide header (source app icon, name, timestamp) in compact mode */
+.history-item.compact .item-header {
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.history-item.compact .item-header .item-app-info > svg,
+.history-item.compact .item-header .item-app-info > img,
+.history-item.compact .item-header .item-app-info > span {
+    display: none !important;
+}
+
+.history-item.compact .item-header .item-timestamp {
     display: none !important;
 }
 
 /* Pinned Indicator - just the corner triangle is enough */
 
-/* Image Preview */
+/* Image Preview — thumbnail scale, uniform height */
 .history-item.compact .image-preview {
-    max-height: 44px !important;
+    max-height: 34px !important;
     width: auto;
-    min-width: 44px;
+    min-width: 34px;
     max-width: 100%;
-    border-radius: 0;
+    border-radius: 2px;
     margin-top: 0;
     display: block;
     object-fit: contain !important;
-    background-color: rgba(0, 0, 0, 0.05);
-    align-self: flex-start;
 }
 
 /* Hover Detail Popover */
@@ -106,17 +128,23 @@
     flex-wrap: wrap;
 }
 
-/* Tags Overlay - Absolute Position in Compact Mode */
+/* Tags Overlay - hidden until hover for cleaner default look */
 .history-item.compact .item-tags-container {
     position: absolute;
     bottom: 2px;
     right: 4px;
     margin: 0 !important;
     z-index: 5;
-    opacity: 0.85;
+    opacity: 0;
     max-width: 60%;
     flex-wrap: nowrap !important;
     overflow: hidden;
+    transition: opacity 0.2s ease;
+}
+
+.history-item.compact:hover .item-tags-container,
+.history-item.compact .item-tags-container:has(.tag-input) {
+    opacity: 0.85;
 }
 
 /* Larger tags styling for better readability */
@@ -128,21 +156,6 @@
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
-}
-
-/* Button Wrapper - reset .item-meta for structure */
-.history-item.compact .item-meta {
-    display: flex !important;
-    position: static !important;
-    margin: 0 !important;
-    border: none !important;
-    height: 0 !important;
-    overflow: visible !important;
-}
-
-/* Hide the App Info (Source/Icon/Pin) on the left side */
-.history-item.compact .item-meta .app-info {
-    display: none !important;
 }
 
 /* Show Drag Handle in Compact Mode */
@@ -164,24 +177,6 @@
 .history-item.compact .drag-handle:hover {
     opacity: 1 !important;
     color: var(--accent-color) !important;
-}
-
-/* The right side wrapper (Buttons) */
-.history-item.compact .item-meta>div:last-child {
-    position: absolute;
-    top: -8px;
-    right: 8px;
-    height: auto;
-    z-index: 200;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    pointer-events: none;
-}
-
-/* Fix for first item buttons being clipped */
-.first-virtual-item .history-item.compact .item-meta>div:last-child {
-    top: -4px !important;
 }
 
 /* Button Actions Styling - Integrated visually into compact item */
@@ -309,10 +304,7 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
     border-radius: 0 !important;
 }
 
-/* Hide Timestamp */
-.history-item.compact .app-info:last-child {
-    display: none !important;
-}
+/* Timestamp already hidden via .item-header rules above */
 
 /* Popover Content Styling */
 .popover-meta .meta-row {
@@ -364,7 +356,14 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
     font-family: var(--font-main);
 }
 
-/* Content Preview */
+/* Collapse footer — children are absolutely positioned */
+.history-item.compact .item-footer {
+    margin-top: 0 !important;
+    height: 0 !important;
+    overflow: visible !important;
+}
+
+/* Content Preview — exactly 2 lines, clipped */
 .history-item.compact .content-preview {
     font-size: var(--clipboard-item-font-size);
     line-height: 1.3;
@@ -372,23 +371,24 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
     margin-bottom: 0;
     -webkit-line-clamp: 2 !important;
     line-clamp: 2 !important;
-    max-height: 40px;
+    max-height: calc(2 * var(--clipboard-item-font-size) * 1.3);
     color: var(--text-primary);
     display: -webkit-box;
     -webkit-box-orient: vertical;
     justify-content: flex-start;
     overflow: hidden !important;
+    flex-shrink: 0;
 }
 
-/* Allow full height for media/file cards in compact mode */
+/* Media/file cards also respect the uniform compact height */
 .history-item.compact .content-preview:has(.video-thumbnail-card),
 .history-item.compact .content-preview:has(.file-thumbnail-card),
 .history-item.compact .content-preview:has(.image-preview) {
-    max-height: none !important;
     -webkit-line-clamp: unset !important;
     line-clamp: unset !important;
-    display: block;
-    overflow: visible !important;
+    display: flex;
+    align-items: center;
+    overflow: hidden !important;
 }
 
 /* Reduced padding for sensitive blur in compact mode to save height */
@@ -396,46 +396,56 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
     padding: 2px 4px !important;
 }
 
-/* Special Content - File & Video Thumbnails in Compact Mode */
+/* Special Content - File & Video Thumbnails scaled to uniform height */
 .history-item.compact .file-thumbnail-card,
 .history-item.compact .video-thumbnail-card {
     border: none !important;
     background: transparent !important;
-    padding: 2px 4px !important;
-    gap: 8px !important;
-    min-height: 44px;
+    padding: 0 !important;
+    gap: 6px !important;
+    min-height: 0 !important;
     display: flex !important;
     align-items: center !important;
 }
 
-/* Compact mode - make file icon smaller */
+/* Compact mode - file icon fits in uniform row */
 .history-item.compact .file-icon-wrapper {
+    width: 22px !important;
+    height: 22px !important;
+    min-width: 22px !important;
+}
+
+/* Compact mode - video thumbnail tiny preview */
+.history-item.compact .video-thumbnail-wrapper {
     width: 32px !important;
-    height: 32px !important;
+    height: 22px !important;
     min-width: 32px !important;
 }
 
-/* Compact mode - make video thumbnail smaller */
-.history-item.compact .video-thumbnail-wrapper {
-    width: 48px !important;
-    height: 36px !important;
-    min-width: 48px !important;
-}
-
-/* Compact mode - file info styling */
+/* Compact mode - file info single line */
 .history-item.compact .file-name {
-    font-size: calc(var(--clipboard-item-font-size) - 1px) !important;
+    font-size: var(--clipboard-item-font-size) !important;
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-/* Hide file path in compact mode */
-.history-item.compact .file-hint {
+/* Hide file path and video name in compact mode */
+.history-item.compact .file-hint,
+.history-item.compact .video-name,
+.history-item.compact .video-info-wrapper {
     display: none !important;
 }
 
+/* Override file-info-wrapper min-height for uniform rows */
+.history-item.compact .file-info-wrapper {
+    min-height: 0 !important;
+}
+
 .history-item.compact .file-icon-wrapper svg {
-    width: 20px !important;
-    height: 20px !important;
+    width: 16px !important;
+    height: 16px !important;
 }
 
 .history-item.compact .file-icon-image {
@@ -453,7 +463,7 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
     background: #007bff;
     z-index: 10;
     pointer-events: none;
-    border-radius: 8px 0 0 8px;
+    border-radius: 4px 0 0 4px;
 }
 
 /* Rounded corners for modern themes - top and bottom left to match item border radius */
@@ -538,7 +548,5 @@ body.theme-mica .history-item.compact,
 body.theme-acrylic .history-item.compact,
 html.theme-mica .history-item.compact,
 html.theme-acrylic .history-item.compact {
-    padding-top: 1px !important;
-    padding-bottom: 1px !important;
-    border-radius: 10px !important;
+    /* Keep separator style consistent */
 }
