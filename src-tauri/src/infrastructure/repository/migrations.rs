@@ -191,21 +191,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
                 created_at INTEGER NOT NULL
             );",
         )?;
-        // Ensure sticky feature is enabled by default for existing users
+        // Sticky feature disabled by default; existing enabled users keep their setting
         conn.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.sticky_enabled', 'true')",
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.sticky_enabled', 'false')",
             [],
         )?;
         conn.execute("INSERT INTO schema_migrations (version) VALUES (10)", [])?;
-    }
-
-    // Migration 11: Ensure sticky_enabled is on for users who got the false default
-    if current_version < 11 {
-        conn.execute(
-            "UPDATE settings SET value = 'true' WHERE key = 'app.sticky_enabled' AND value = 'false'",
-            [],
-        )?;
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])?;
     }
 
     Ok(())
