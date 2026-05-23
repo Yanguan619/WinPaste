@@ -6,7 +6,6 @@
 
 <img width="auto" height="580" alt="image" src="https://github.com/user-attachments/assets/dfbb9b50-011a-4aab-867f-541de52c15db" />
 
-<img width="30%" height="auto" alt="2026-05-23_11-51-16" src="https://github.com/user-attachments/assets/9bcd575f-1a5e-4509-bc95-7a4d7c4f65e9" />
 
 ------
 
