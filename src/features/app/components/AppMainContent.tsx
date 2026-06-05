@@ -3,6 +3,7 @@ import type { ComponentProps, RefObject, ReactNode } from "react";
 import { motion, Reorder, useDragControls, AnimatePresence } from "framer-motion";
 import type { DragControls } from "framer-motion";
 import { ArrowUp, Clipboard, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import type { StickyEntry } from "../../../shared/types/sticky";
 import { StickyManager } from "../../sticky/StickyManager";
 import SettingsPanel from "../../settings/components/SettingsPanel";
@@ -122,6 +123,14 @@ const AppMainContent = ({
   const [isStickyExpanded, setIsStickyExpanded] = useState(false);
 
   const hasStickies = stickyEnabled && stickyEntries && stickyEntries.length > 0;
+
+  // 面板关闭时重置折叠状态，每次唤出都是折叠的
+  useEffect(() => {
+    const unlisten = listen("window-hidden", () => {
+      setIsPinnedExpanded(false);
+    });
+    return () => { unlisten.then(fn => fn()).catch(() => {}); };
+  }, []);
 
   useEffect(() => {
     if (isDraggingPinned) return;

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :1422)",
+      "Bash(cmd *)",
+      "Bash(powershell *)",
+      "Bash(where bash *)",
+      "Read(//c/Program Files/Git/bin/**)",
+      "Bash(node ocr-mcp.js)"
+    ]
+  }
+}

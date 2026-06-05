@@ -92,6 +92,7 @@ let compactPreviewPendingShow = false;
 let compactPreviewPendingAnchor: CompactPreviewAnchor | null = null;
 let compactPreviewPendingTimer: ReturnType<typeof setTimeout> | null = null;
 let compactPreviewLifecycleListenersReady: Promise<void> | null = null;
+let compactPreviewGen = 0; // 每次隐藏时递增，展示前校验避免竞态
 
 const loadWebviewWindowModule = async () => import("@tauri-apps/api/webviewWindow");
 
@@ -193,6 +194,7 @@ const placeAndShowPendingCompactPreview = async (
     options?: { keepPending?: boolean }
 ) => {
     if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) return;
+    const gen = compactPreviewGen;
 
     const appWindow = getCurrentWindow();
     const scale = await appWindow.scaleFactor();
@@ -209,11 +211,17 @@ const placeAndShowPendingCompactPreview = async (
     const mainSize = await appWindow.outerSize().catch(() => null);
     const avoidRect = mainOuter && mainSize ? { left: mainOuter.x, top: mainOuter.y, right: mainOuter.x + mainSize.width, bottom: mainOuter.y + mainSize.height } : null;
 
+    // 经过多个 await 后，面板可能已经关闭了。检查 gen 避免竞态：
+    // 如果 hideCompactPreviewGlobal 在 await 期间被调用, gen 会递增, 此时应放弃展示。
+    if (gen !== compactPreviewGen || !compactPreviewWindow) return;
+
     const target = pickPreviewPosition(anchorPx.x, anchorPx.y, widthPx, heightPx, monitorPos, monitorSize, margin, offset, avoidRect);
 
     setIgnoreBlurSafe(true);
     try {
         await compactPreviewWindow.setPosition(new PhysicalPosition(target.x, target.y));
+        // 再次检查 gen，setPosition 期间也可能被关闭
+        if (gen !== compactPreviewGen || !compactPreviewWindow) { setIgnoreBlurSafe(false); return; }
         await compactPreviewWindow.show();
         try { await compactPreviewWindow.setAlwaysOnTop(false); await compactPreviewWindow.setAlwaysOnTop(true); } catch {}
     } catch (err) {
@@ -224,11 +232,15 @@ const placeAndShowPendingCompactPreview = async (
 };
 
 const hideCompactPreviewGlobal = async () => {
+    compactPreviewGen++;
     const previewWindow = compactPreviewWindow;
+    compactPreviewWindow = null;
+    compactPreviewMounted = false;
+    compactPreviewMountedPromise = null;
     clearCompactPreviewPendingState();
     setIgnoreBlurSafe(false);
     if (!previewWindow) return;
-    try { await previewWindow.hide(); } catch (err) { compactPreviewWindow = null; compactPreviewMounted = false; compactPreviewMountedPromise = null; }
+    try { await previewWindow.hide(); } catch { /* 窗口可能已被销毁, 忽略 */ }
 };
 
 const seekVideoPreviewFrame = (video: HTMLVideoElement | null) => {
@@ -480,7 +492,7 @@ const ClipboardItem = ({
             }}
             onClick={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); onCopy(false); onSelect(); }}
             onContextMenu={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); e.preventDefault(); onCopy(true); onSelect(); }}
-            onMouseEnter={(e) => { if (!canShowCompactPreview) return; hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 450); }}
+            onMouseEnter={(e) => { if (!canShowCompactPreview) return; hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 200); }}
             onMouseMove={(e) => { if (canShowCompactPreview) hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; }}
             onMouseLeave={() => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void hideCompactPreviewGlobal(); }}
         >

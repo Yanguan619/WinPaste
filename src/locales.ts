@@ -897,6 +897,7 @@ export const translations = {
 
         // Header
         settings: "設定",
+        vibrancy_enabled: "啟用視窗透明",
         app_name: "winpaste",
         clear_history: "清空歷史",
         hide: "隱藏",
@@ -980,6 +981,8 @@ export const translations = {
         quick_paste_enabled_hint: "開啟後，按下快速鍵可快速貼上前面9筆紀錄，0為第10筆紀錄",
         rich_paste_hotkey_label: "帶格式貼上快速鍵",
         search_hotkey_label: "搜尋快速鍵",
+        clear_history_title: "清除歷史紀錄?",
+        clear_history_confirm: "確認清除",
         global_hotkey: "全域快速鍵",
         hotkey_recording_hint: "請按快速鍵組合，ESC 取消",
         hotkey_click_hint: "點擊右側區域開始錄製",
@@ -1020,6 +1023,10 @@ export const translations = {
         emoji_panel_enabled_hint: "關閉後隱藏表情包入口",
         tag_manager_enabled: "標籤管理頁開關",
         tag_manager_enabled_hint: "關閉後隱藏標籤管理入口",
+        auto_hide_tags: "自動隱藏標籤",
+        auto_hide_tags_hint: "開啟後僅在點擊「標籤」按鈕時顯示標籤，完成編輯後自動隱藏",
+        pinned_collapsed: "折疊置頂記錄",
+        pinned_collapsed_desc: "開啟後，置頂的記錄將折疊隱藏，不參與主列表的上下鍵選擇",
         custom_background: "自定義背景",
         choose_background: "選擇背景",
         change_background: "更換背景",

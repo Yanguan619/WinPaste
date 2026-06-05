@@ -489,6 +489,22 @@ pub fn hide_window_cmd(app_handle: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Hide the main window without restoring focus to the previous window.
+/// Used when the user clicks outside the panel — the click already transferred
+/// focus naturally, so calling restore_last_focus would cause a focus fight.
+pub fn hide_window_no_restore(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        WindowExt::release_win_keys();
+        let _ = window.set_focusable(false);
+        crate::IS_MAIN_WINDOW_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = window.hide();
+        NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
+        NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
+        let _ = app_handle.emit("window-hidden", ());
+    }
+}
+
 #[tauri::command]
 pub fn toggle_window_cmd(app_handle: AppHandle) -> Result<(), String> {
     toggle_window(&app_handle);

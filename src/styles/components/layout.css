@@ -141,7 +141,7 @@ select.search-input option {
   position: absolute;
   right: 16px;
   bottom: 16px;
-  z-index: 5;
+  z-index: 101; /* 高于紧凑模式悬浮操作层(z-index:100)，避免被遮挡 */
   border-radius: var(--button-radius);
   padding: 8px;
   /* Fallback for WebView2 transparent window bug */
@@ -174,7 +174,7 @@ body:not(.dark-mode) .scroll-top-button:hover {
 
 .virtual-list-wrapper [data-virtuoso-scroller="true"] {
   width: 100% !important;
-  padding: 0 6px !important; /* 对齐 header 的 16px 边距 */
+  padding: 0 6px 52px 6px !important; /* 底部留白为回到顶部按钮腾空间，避免遮挡末条操作按钮 */
   box-sizing: border-box !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;

@@ -16,7 +16,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 
 use crate::global_state::*;
 use crate::app_state::SettingsState;
-use crate::app::window_manager::{toggle_window, hide_window_cmd};
+use crate::app::window_manager::{toggle_window, hide_window_no_restore};
 use crate::infrastructure::windows_ext::WindowExt;
 
 // Store registered hotkey IDs for cleanup
@@ -111,7 +111,11 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                         
                         if !is_win && !is_other_modifier && is_down {
                             let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
-                            let alt_down = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0 };
+                            let alt_down = unsafe {
+                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                                (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
+                                (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
+                            };
                             let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || 
                                           (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
 
@@ -170,7 +174,11 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                         if is_top_digit || is_numpad_digit {
                             let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
                             let shift_down = unsafe { GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_SHIFT.0 as i32) as u16 & 0x8000 != 0 };
-                            let alt_down = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0 };
+                            let alt_down = unsafe {
+                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                                (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
+                                (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
+                            };
                             let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
                             
                             // Only trigger quick paste if Ctrl+Shift is held without Alt/Win
@@ -200,7 +208,11 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                     // 2. Global Paste Sound Trigger (Ctrl+V)
                     if vk_code == 0x56 && is_down {
                         let ctrl_down = unsafe { (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
-                        let alt_down = unsafe { (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0 };
+                        let alt_down = unsafe {
+                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                                (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
+                                (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
+                            };
                         let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
 
                         if ctrl_down && !alt_down && !win_down {
@@ -232,7 +244,11 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                                 vk_code == 0x08 || vk_code == 0x20;
 
                         let ctrl_down = unsafe { (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
-                        let alt_down = unsafe { (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0 };
+                        let alt_down = unsafe {
+                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                                (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
+                                (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
+                            };
                         let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
 
                         if is_enter || is_escape || is_up_down {
@@ -324,7 +340,7 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                                     // In pinned mode, don't hide, but we can release focus
                                                     // However, DON'T set focusable(false) as it prevents clicking back to focus
                                                 } else {
-                                                    let _ = hide_window_cmd(app_handle.clone());
+                                                    hide_window_no_restore(&app_handle);
                                                 }
                                             }
                                         }
@@ -404,7 +420,9 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
                                     vk == 0x08 || vk == 0x20;     // Backspace, Space
             
             let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
-            let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0;
+            let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0xA4i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0xA5i32) as u16 & 0x8000) != 0;
             let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
 
             // 无论是否聚焦，我们都强行拦截导航键以防 Windows 焦点未成功转移时发生穿透

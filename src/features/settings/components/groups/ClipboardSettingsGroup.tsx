@@ -772,6 +772,7 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                         }
                                     } catch (err) {
                                         console.error(err);
+                                        props.setRegistryWinVEnabled(!enabled); // 操作失败，回退开关状态
                                         message(props.t('error') + `: ${err}`, { kind: 'error' });
                                     }
                                 }}
