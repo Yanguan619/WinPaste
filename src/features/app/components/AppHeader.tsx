@@ -184,7 +184,13 @@ const AppHeader = ({
                   }}
                 />
                 {showTagFilter && searchIsFocused && allTags.length > 0 && (
-                  <div className="tags-dropdown">
+                  <motion.div
+                    className="tags-dropdown"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.15, delay: 0.15, ease: "easeOut" }}
+                  >
                     <div className="tags-label">{t('tags') || "Tags"}</div>
                     <div className="tags-list">
                       {allTags.map(tag => (
@@ -203,7 +209,7 @@ const AppHeader = ({
                         </span>
                       ))}
                     </div>
-                  </div>
+                  </motion.div>
                 )}
               </div>
               <div

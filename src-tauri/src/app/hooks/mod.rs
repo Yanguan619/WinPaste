@@ -251,12 +251,17 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                         let is_escape = vk_code == 0x1B;
                         // 只处理上下方向键
                         let is_up_down = vk_code == 0x26 || vk_code == 0x28;
-                        let is_search_trigger = (vk_code >= 0x30 && vk_code <= 0x39) ||
-                                                (vk_code >= 0x41 && vk_code <= 0x5A) ||
-                                                (vk_code >= 0x60 && vk_code <= 0x6F) ||
-                                                (vk_code >= 0xBA && vk_code <= 0xC0) ||
-                                                (vk_code >= 0xDB && vk_code <= 0xDE) ||
-                                                vk_code == 0x08 || vk_code == 0x20;
+                        let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
+                        let alt_down = unsafe {
+                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                                (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
+                                (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
+                            };
+                        let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
+
+                        let is_ctrl_f = vk_code == 0x46 && ctrl_down && !alt_down && !win_down;
+                        let is_slash = vk_code == 0xBF && !ctrl_down && !alt_down && !win_down;
+                        let is_search_trigger = is_ctrl_f || is_slash;
 
                         if is_enter || is_escape || is_up_down {
                             let action = match vk_code {
@@ -282,55 +287,53 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                 }
                             }
                         } else if is_search_trigger && !is_focused {
-                            let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
-                            let alt_down = unsafe {
-                                    (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
-                                    (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
-                                    (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
-                                };
-                            let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
-
                             if !ctrl_down && !alt_down && !win_down {
+                                // For slash
                                 NAVIGATION_MODE_ACTIVE.store(false, Ordering::Relaxed);
                                 let _ = app_handle.emit("navigation-action", "search-activate");
                                 let _ = crate::app::window_manager::activate_window_focus(app_handle.clone());
-                                
-                                // IME Replay 逻辑
-                                let vk_copy = vk_code;
-                                tauri::async_runtime::spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_millis(15)).await;
-                                    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY};
-                                    unsafe {
-                                        let inputs = [
-                                            INPUT {
-                                                r#type: INPUT_KEYBOARD,
-                                                Anonymous: INPUT_0 {
-                                                    ki: KEYBDINPUT {
-                                                        wVk: VIRTUAL_KEY(vk_copy as u16),
-                                                        wScan: 0,
-                                                        dwFlags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0),
-                                                        time: 0,
-                                                        dwExtraInfo: 0x57494E50,
-                                                    }
-                                                }
-                                            },
-                                            INPUT {
-                                                r#type: INPUT_KEYBOARD,
-                                                Anonymous: INPUT_0 {
-                                                    ki: KEYBDINPUT {
-                                                        wVk: VIRTUAL_KEY(vk_copy as u16),
-                                                        wScan: 0,
-                                                        dwFlags: KEYEVENTF_KEYUP,
-                                                        time: 0,
-                                                        dwExtraInfo: 0x57494E50,
-                                                    }
+                            } else if is_ctrl_f {
+                                // For Ctrl+F
+                                NAVIGATION_MODE_ACTIVE.store(false, Ordering::Relaxed);
+                                let _ = app_handle.emit("navigation-action", "search-activate");
+                                let _ = crate::app::window_manager::activate_window_focus(app_handle.clone());
+                            }
+                            
+                            // IME Replay 逻辑 (保持最原始的对齐重发机制)
+                            let vk_copy = vk_code;
+                            tauri::async_runtime::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+                                use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY};
+                                unsafe {
+                                    let inputs = [
+                                        INPUT {
+                                            r#type: INPUT_KEYBOARD,
+                                            Anonymous: INPUT_0 {
+                                                ki: KEYBDINPUT {
+                                                    wVk: VIRTUAL_KEY(vk_copy as u16),
+                                                    wScan: 0,
+                                                    dwFlags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0),
+                                                    time: 0,
+                                                    dwExtraInfo: 0x57494E50,
                                                 }
                                             }
-                                        ];
-                                        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-                                    }
-                                });
-                            }
+                                        },
+                                        INPUT {
+                                            r#type: INPUT_KEYBOARD,
+                                            Anonymous: INPUT_0 {
+                                                ki: KEYBDINPUT {
+                                                    wVk: VIRTUAL_KEY(vk_copy as u16),
+                                                    wScan: 0,
+                                                    dwFlags: KEYEVENTF_KEYUP,
+                                                    time: 0,
+                                                    dwExtraInfo: 0x57494E50,
+                                                }
+                                            }
+                                        }
+                                    ];
+                                    SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+                                }
+                            });
                         }
                     }
                 }
@@ -447,24 +450,18 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
                 return LRESULT(1);
             }
 
-            let is_search_trigger = (vk >= 0x30 && vk <= 0x39) || // 0-9
-                                    (vk >= 0x41 && vk <= 0x5A) || // A-Z
-                                    (vk >= 0x60 && vk <= 0x6F) || // Numpad
-                                    (vk >= 0xBA && vk <= 0xC0) || // Punctuation
-                                    (vk >= 0xDB && vk <= 0xDE) || // Punctuation
-                                    vk == 0x08 || vk == 0x20;     // Backspace, Space
+            let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
+            let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0xA4i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0xA5i32) as u16 & 0x8000) != 0;
+            let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
+
+            let is_ctrl_f = vk == 0x46 && ctrl_down && !alt_down && !win_down;
+            let is_slash = vk == 0xBF && !ctrl_down && !alt_down && !win_down;
+            let is_search_trigger = is_ctrl_f || is_slash;
             
             if is_search_trigger && !is_focused {
-                let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
-                let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
-                    || (GetAsyncKeyState(0xA4i32) as u16 & 0x8000) != 0
-                    || (GetAsyncKeyState(0xA5i32) as u16 & 0x8000) != 0;
-                let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
-
-                // 对于文本输入（搜索触发），只有在【未聚焦】时拦截并重播。若已聚焦，放行给 OS 以激活原生 IME。
-                if !ctrl_down && !alt_down && !win_down {
-                    return LRESULT(1);
-                }
+                return LRESULT(1);
             }
         }
         

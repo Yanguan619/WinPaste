@@ -441,6 +441,13 @@ pub fn set_navigation_mode(active: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
+    // Temporarily ignore blur events during window activation to prevent focus-fight reset loops
+    IGNORE_BLUR.store(true, Ordering::Relaxed);
+    tauri::async_runtime::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        IGNORE_BLUR.store(false, Ordering::Relaxed);
+    });
+
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.set_focusable(true);
         crate::IS_MAIN_WINDOW_FOCUSED.store(true, std::sync::atomic::Ordering::Relaxed);

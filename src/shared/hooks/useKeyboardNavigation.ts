@@ -137,7 +137,12 @@ export const useKeyboardNavigation = ({
 
       if (action === "search-activate") {
         setShowSearchBox(true);
-        setTimeout(() => searchInputRef.current?.focus(), 50);
+        setTimeout(() => {
+          if (searchInputRef.current) {
+            searchInputRef.current.focus({ preventScroll: true });
+            searchInputRef.current.click();
+          }
+        }, 250);
         return;
       }
 
@@ -152,7 +157,12 @@ export const useKeyboardNavigation = ({
         } else {
            setSearch(prev => prev + char);
         }
-        setTimeout(() => searchInputRef.current?.focus(), 50);
+        setTimeout(() => {
+          if (searchInputRef.current) {
+            searchInputRef.current.focus({ preventScroll: true });
+            searchInputRef.current.click();
+          }
+        }, 250);
         return;
       }
 
@@ -302,16 +312,22 @@ export const useKeyboardNavigation = ({
         return;
       }
 
-      // 8. Alphanumeric to start search
-      const isProcess = e.key === 'Process' || e.key === 'Unidentified' || e.keyCode === 229 || e.isComposing;
-      const isAlphanumeric = /^[a-zA-Z0-9]$/.test(e.key);
-      const isChinesePunctuation = /^[，。！？；：“”‘’【】《》（）—…、·]$/.test(e.key);
+      // 8. Ctrl+F or / to start search
+      const isCtrlF = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f';
+      const isSlash = !e.ctrlKey && !e.metaKey && !e.altKey && e.key === '/';
 
-      if (isAlphanumeric || isChinesePunctuation || isProcess) {
+      if (isCtrlF || isSlash) {
         // Only steal focus if not already in an input
         if (!isInputFocused && !showSettingsRef.current && !showTagManagerRef.current && !isEditingTags) {
+          e.preventDefault();
+          e.stopPropagation();
           setShowSearchBox(true);
-          searchInputRef.current?.focus();
+          setTimeout(() => {
+            if (searchInputRef.current) {
+              searchInputRef.current.focus({ preventScroll: true });
+              searchInputRef.current.click();
+            }
+          }, 250);
         }
       }
     };

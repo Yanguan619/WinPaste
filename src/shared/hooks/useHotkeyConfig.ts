@@ -53,6 +53,12 @@ export const useHotkeyConfig = ({
     (newHotkey: string, mode: HotkeyMode): boolean => {
       if (!newHotkey) return false;
 
+      if (newHotkey.toUpperCase() === "CTRL+F") {
+        const reservedMsg = t("ctrl_f_reserved") || "Ctrl+F 为内置搜索快捷键，无法绑定";
+        pushToast(reservedMsg, 5000);
+        return true;
+      }
+
       const conflicts = [];
       if (mode !== "main" && newHotkey === hotkey) conflicts.push(t("global_hotkey"));
       if (mode !== "sequential" && sequentialMode && newHotkey === sequentialHotkey) {

@@ -330,11 +330,12 @@ const App = () => {
       setShowSettings(false);
       setShowTagManager(false);
       setShowSearchBox(true);
-      setSearchIsFocused(true);
-      setShowTagFilter(true);
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-      });
+      setTimeout(() => {
+        if (searchInputRef.current) {
+          searchInputRef.current.focus({ preventScroll: true });
+          searchInputRef.current.click();
+        }
+      }, 250);
     });
 
     return () => {
