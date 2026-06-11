@@ -98,6 +98,21 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
         while let Some(event) = rx.recv().await {
             match event {
                 InputEvent::Keyboard { vk_code, is_down } => {
+                    // 0. Handle Win+V Hook Trigger if configured
+                    let is_win_v_configured = {
+                        let current = HOTKEY_STRING.lock().unwrap();
+                        is_win_v_hotkey(&current)
+                    };
+
+                    if is_win_v_configured && vk_code == 0x56 && is_down {
+                        let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
+                        if win_down {
+                            crate::info!(">>> [DEBUG] Win+V Hook Trigger activated!");
+                            toggle_window(&app_handle);
+                            continue;
+                        }
+                    }
+
                     // 1. Handle Recording Mode
                     if IS_RECORDING.load(Ordering::SeqCst) {
                         if vk_code == 0x1B && is_down { // ESC to cancel
@@ -243,14 +258,6 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                                 (vk_code >= 0xDB && vk_code <= 0xDE) ||
                                                 vk_code == 0x08 || vk_code == 0x20;
 
-                        let ctrl_down = unsafe { (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
-                        let alt_down = unsafe {
-                                (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
-                                (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
-                                (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
-                            };
-                        let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
-
                         if is_enter || is_escape || is_up_down {
                             let action = match vk_code {
                                 0x26 => "up".to_string(),
@@ -274,8 +281,16 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                     let _ = app_handle.emit("navigation-action", action);
                                 }
                             }
-                        } else if !ctrl_down && !alt_down && !win_down {
-                            if is_search_trigger && !is_focused {
+                        } else if is_search_trigger && !is_focused {
+                            let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
+                            let alt_down = unsafe {
+                                    (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                                    (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||  // VK_LMENU
+                                    (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)     // VK_RMENU
+                                };
+                            let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
+
+                            if !ctrl_down && !alt_down && !win_down {
                                 NAVIGATION_MODE_ACTIVE.store(false, Ordering::Relaxed);
                                 let _ = app_handle.emit("navigation-action", "search-activate");
                                 let _ = crate::app::window_manager::activate_window_focus(app_handle.clone());
@@ -390,6 +405,21 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
             });
         }
 
+        let vk = kbd_struct.vkCode;
+
+        // Intercept Win+V if configured as the main hotkey to avoid OS register/hook fights and high CPU
+        let is_win_v_configured = {
+            let current = HOTKEY_STRING.lock().unwrap();
+            is_win_v_hotkey(&current)
+        };
+
+        if is_win_v_configured && vk == 0x56 {
+            let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
+            if win_down {
+                return LRESULT(1);
+            }
+        }
+
         // Special case: block navigation keys if window is active to prevent system from handling them
         let is_visible = !IS_HIDDEN.load(Ordering::Relaxed) && NAVIGATION_ENABLED.load(Ordering::SeqCst);
         let is_focused = IS_MAIN_WINDOW_FOCUSED.load(Ordering::Relaxed);
@@ -404,13 +434,18 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
                 return CallNextHookEx(None, n_code, w_param, l_param);
             }
 
-            let vk = kbd_struct.vkCode;
-            
             // 注意：只拦截上下方向键（0x26, 0x28），不要拦截左右键（0x25, 0x27），否则会导致搜索框无法左右移动光标
             let is_arrow_key = vk == 0x26 || vk == 0x28;
             let is_enter_esc = vk == 0x0D || vk == 0x1B;
             // 忽略 allow_navigation 设置，强制允许上下键选择，否则默认设置会导致用户认为失效
             let is_navigation_key = is_arrow_key || is_enter_esc;
+
+            // 无论是否聚焦，我们都强行拦截导航键以防 Windows 焦点未成功转移时发生穿透
+            if is_navigation_key {
+                // 不再检查 modifiers (Ctrl/Alt/Win)，只要用户按了上下方向键/回车/ESC，就强行拦截
+                // 这解决了用户在唤出面板后物理按键没松开导致拦截失效的问题
+                return LRESULT(1);
+            }
 
             let is_search_trigger = (vk >= 0x30 && vk <= 0x39) || // 0-9
                                     (vk >= 0x41 && vk <= 0x5A) || // A-Z
@@ -419,18 +454,13 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
                                     (vk >= 0xDB && vk <= 0xDE) || // Punctuation
                                     vk == 0x08 || vk == 0x20;     // Backspace, Space
             
-            let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
-            let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
-                || (GetAsyncKeyState(0xA4i32) as u16 & 0x8000) != 0
-                || (GetAsyncKeyState(0xA5i32) as u16 & 0x8000) != 0;
-            let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
+            if is_search_trigger && !is_focused {
+                let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
+                let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0xA4i32) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0xA5i32) as u16 & 0x8000) != 0;
+                let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
 
-            // 无论是否聚焦，我们都强行拦截导航键以防 Windows 焦点未成功转移时发生穿透
-            if is_navigation_key {
-                // 不再检查 modifiers (Ctrl/Alt/Win)，只要用户按了上下方向键/回车/ESC，就强行拦截
-                // 这解决了用户在唤出面板后物理按键没松开导致拦截失效的问题
-                return LRESULT(1);
-            } else if is_search_trigger && !is_focused {
                 // 对于文本输入（搜索触发），只有在【未聚焦】时拦截并重播。若已聚焦，放行给 OS 以激活原生 IME。
                 if !ctrl_down && !alt_down && !win_down {
                     return LRESULT(1);
@@ -438,10 +468,15 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
             }
         }
         
-        // Block all keys during recording mode except ESC (handled in worker)
+        // Block keys during recording mode except ESC and modifier keys
         if IS_RECORDING.load(Ordering::SeqCst) {
             let vk = kbd_struct.vkCode;
-            if vk != 0x1B { // Not ESC
+            let is_modifier = vk == 0x11 || vk == 0xA2 || vk == 0xA3 || // Ctrl
+                              vk == 0x12 || vk == 0xA4 || vk == 0xA5 || // Alt
+                              vk == 0x5B || vk == 0x5C ||               // Win
+                              vk == 0x10 || vk == 0xA0 || vk == 0xA1 || // Shift
+                              vk == 0x1B;                              // Esc
+            if !is_modifier {
                 return LRESULT(1);
             }
         }

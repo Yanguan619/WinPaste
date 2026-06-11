@@ -24,8 +24,8 @@ pub fn register_hotkey(app_handle: AppHandle, hotkey: String) -> AppResult<()> {
     if !hotkey.is_empty() {
         let normalized = normalize_shortcut_string(&hotkey);
         crate::info!(">>> [DEBUG] Normalized main hotkey: {}", normalized);
-        if hotkey.eq_ignore_ascii_case("MouseMiddle") || hotkey.eq_ignore_ascii_case("MButton") {
-            // Mouse middle handled in hooks
+        if hotkey.eq_ignore_ascii_case("MouseMiddle") || hotkey.eq_ignore_ascii_case("MButton") || crate::app::hooks::is_win_v_hotkey(&hotkey) {
+            // Mouse middle and Win+V handled in hooks
         } else {
             match normalized.parse::<Shortcut>() {
                 Ok(shortcut) => {
@@ -71,7 +71,7 @@ pub fn register_hotkey(app_handle: AppHandle, hotkey: String) -> AppResult<()> {
 #[tauri::command]
 pub fn test_hotkey_available(app_handle: AppHandle, hotkey: String) -> AppResult<bool> {
     crate::info!(">>> [DEBUG] Testing hotkey available: {}", hotkey);
-    if hotkey.is_empty() || hotkey.eq_ignore_ascii_case("MouseMiddle") || hotkey.eq_ignore_ascii_case("MButton") {
+    if hotkey.is_empty() || hotkey.eq_ignore_ascii_case("MouseMiddle") || hotkey.eq_ignore_ascii_case("MButton") || crate::app::hooks::is_win_v_hotkey(&hotkey) {
         return Ok(true);
     }
 

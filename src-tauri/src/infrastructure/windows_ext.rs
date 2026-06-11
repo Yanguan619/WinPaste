@@ -12,8 +12,7 @@ use windows::Win32::System::Ole::{SafeArrayAccessData, SafeArrayUnaccessData, Sa
 use windows::Win32::UI::Accessibility::{IUIAutomation, CUIAutomation, IUIAutomationTextPattern, UIA_PATTERN_ID};
 use windows::core::{Interface, IUnknown};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
-    VK_LWIN, VK_RWIN
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY
 };
 
 /// 安全封装的窗口辅助工具
@@ -145,15 +144,13 @@ impl WindowExt {
         }
     }
 
-    /// 释放 Windows 键（防止开始菜单弹出）
+    /// 释放 Windows 键（通过发送哑键 0xFF 拦截并取消 Windows 开始菜单弹出）
     pub fn release_win_keys() {
         unsafe {
             let dummy_vk = VIRTUAL_KEY(0xFF);
             let inputs = [
                 Self::create_key_input(dummy_vk, false),
                 Self::create_key_input(dummy_vk, true),
-                Self::create_key_input(VK_LWIN, true),
-                Self::create_key_input(VK_RWIN, true),
             ];
             SendInput(&inputs, core::mem::size_of::<INPUT>() as i32);
         }

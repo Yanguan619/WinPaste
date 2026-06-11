@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 interface LabelWithHintProps {
@@ -679,11 +679,12 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                     return;
                                 }
 
+                                if (e.metaKey) return; // 禁用录制任何 Win+ 组合键
+
                                 const modifiers = [];
                                 if (e.ctrlKey) modifiers.push('Ctrl');
                                 if (e.shiftKey) modifiers.push('Shift');
                                 if (e.altKey) modifiers.push('Alt');
-                                if (e.metaKey) modifiers.push('Win');
 
                                 const key = e.key.toUpperCase();
                                 if (['CONTROL', 'SHIFT', 'ALT', 'META'].includes(key)) return;
@@ -722,7 +723,6 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                     props.setRegistryWinVEnabled(enabled);
                                     try {
                                         await invoke("save_setting", { key: 'app.use_win_v_shortcut', value: String(enabled) });
-                                        const changed = await invoke("trigger_registry_win_v_optimization", { enable: enabled });
                                         let targetHotkey = "Alt+C";
                                         if (enabled) {
                                             if (props.hotkey && props.hotkey !== "Win+V") {
@@ -736,44 +736,10 @@ const ClipboardSettingsGroup = (props: ClipboardSettingsGroupProps) => {
                                             }
                                         }
 
-                                        if (!enabled) {
-                                            await props.updateHotkey(targetHotkey);
-                                        } else if (!changed) {
-                                            props.updateHotkey(targetHotkey);
-                                        }
-
-                                        if (changed) {
-                                            const confirmed = await ask(
-                                                props.t('restart_explorer_confirm'),
-                                                { title: props.t('restart_explorer_title'), kind: 'warning' }
-                                            );
-                                            if (confirmed) {
-                                                await invoke("restart_explorer");
-                                                if (enabled) {
-                                                    setTimeout(() => {
-                                                        props.updateHotkey(targetHotkey);
-                                                    }, 1500);
-                                                }
-
-                                                setTimeout(async () => {
-                                                    try {
-                                                        await invoke("set_theme", {
-                                                            theme: "fluent",
-                                                            color_mode: "dark",
-                                                            show_app_border: props.appSettings["app.show_app_border"] !== "false"
-                                                        });
-                                                    } catch (e) {
-                                                        console.error("Failed to restore theme:", e);
-                                                    }
-                                                }, 2500);
-                                            } else {
-                                                props.updateHotkey(targetHotkey);
-                                            }
-                                        }
+                                        await props.updateHotkey(targetHotkey);
                                     } catch (err) {
                                         console.error(err);
                                         props.setRegistryWinVEnabled(!enabled); // 操作失败，回退开关状态
-                                        message(props.t('error') + `: ${err}`, { kind: 'error' });
                                     }
                                 }}
                             />
