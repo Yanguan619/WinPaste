@@ -1,6 +1,12 @@
 !include "LogicLib.nsh"
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  # Check if we actually need to restore the registry (i.e. did old registry takeover modifications exist?)
+  # We check DisallowClipboardHistory policy which was uniquely created by our old registry optimization.
+  ClearErrors
+  ReadRegDWORD $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" "DisallowClipboardHistory"
+  IfErrors no_restore
+
   DetailPrint "Restoring Windows Clipboard settings..."
   
   # 1. Restore EnableClipboardHistory and EnableCloudClipboard to default (1)
@@ -43,6 +49,8 @@
   DetailPrint "Restarting Explorer to apply changes..."
   nsExec::Exec '"powershell.exe" -NoProfile -WindowStyle Hidden -Command "Stop-Process -Name explorer -Force; Start-Process explorer"'
   DetailPrint "Explorer restarted."
+
+  no_restore:
 !macroend
 
 # Function for string replacement (Uninstall version)

@@ -357,12 +357,17 @@ fn start_services(app: &App, s: &StartupSettings, app_handle: AppHandle) {
         }
     }
 
-    // Win+V Optimization: sync DB setting with actual registry state.
-    // If registry was cleaned (e.g., by uninstall), reset DB to false so the
-    // toggle reflects reality instead of showing ON while not actually working.
+    // Win+V Migration: If an old user has app.use_win_v_shortcut enabled AND their registry is currently optimized (from the old version),
+    // we restore their registry to normal (since we now use pure hook interception) and restart explorer once.
     if db_state.settings_repo.get("app.use_win_v_shortcut").unwrap_or(Some("false".to_string())) == Some("true".to_string()) {
-        if !crate::app::commands::system_cmd::get_registry_win_v_optimized_status() {
-            let _ = db_state.settings_repo.set("app.use_win_v_shortcut", "false");
+        if crate::app::commands::system_cmd::get_registry_win_v_optimized_status() {
+            crate::info!(">>> [MIGRATION] Restoring Win+V registry settings to normal for old user...");
+            if let Ok(changed) = crate::app::commands::system_cmd::trigger_registry_win_v_optimization(false) {
+                if changed {
+                    crate::info!(">>> [MIGRATION] Restarting explorer to apply registry restoration...");
+                    let _ = crate::app::commands::system_cmd::restart_explorer();
+                }
+            }
         }
     }
 }
