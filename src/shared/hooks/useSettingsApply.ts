@@ -115,7 +115,7 @@ export const useSettingsApply = ({
   useEffect(() => {
     if (!settingsLoaded) return;
     const root = document.documentElement;
-    root.style.setProperty("--item-font-size", `${clipboardItemFontSize}px`);
-    root.style.setProperty("--tag-font-size", `${clipboardTagFontSize}px`);
+    root.style.setProperty("--clipboard-item-font-size", `${clipboardItemFontSize}px`);
+    root.style.setProperty("--clipboard-tag-font-size", `${clipboardTagFontSize}px`);
   }, [clipboardItemFontSize, clipboardTagFontSize, settingsLoaded]);
 };
