@@ -47,6 +47,6 @@ WinPaste 的设计理念是**“用完即走，绝不打断”**：
 
 ### 致谢与协议
 
-本项目基于 **[jimuzhe/tiez-clipboard](https://github.com/jimuzhe/tiez-clipboard)** 开发，并严格遵守其采用的 **GNU General Public License v3.0 (GPLv3)** 开源协议。在此，我们再次对原作者的卓越工作和慷慨开源表示最诚挚的感谢。
+灵感源于 **[tiez](https://github.com/jimuzhe/tiez-clipboard)** 遵守**GNU** 开源协议。
 
 ------
