@@ -155,7 +155,7 @@ const AppHeader = ({
                 <input
                   ref={searchInputRef}
                   type="text"
-                  className={`search-input ${showTagFilter && allTags.length > 0 ? 'dropdown-open' : ''}`}
+                  className={`search-input ${showTagFilter && allTags.length > 0 && search.trim() === "" ? 'dropdown-open' : ''}`}
                   placeholder={t('search_placeholder')}
                   value={search}
                   onCompositionStart={() => setIsComposing(true)}
@@ -172,18 +172,20 @@ const AppHeader = ({
                   onClick={() => { setShowTagFilter(true); setEditingTagsId(null); }}
                   onFocus={() => {
                     invoke("activate_window_focus").catch(console.error);
+                    invoke("set_search_focused", { focused: true }).catch(console.error);
                     setShowTagFilter(true);
                     setSearchIsFocused(true);
                     setEditingTagsId(null);
                   }}
                   onBlur={() => {
+                    invoke("set_search_focused", { focused: false }).catch(console.error);
                     setTimeout(() => {
                       setShowTagFilter(false);
                       setSearchIsFocused(false);
                     }, 200);
                   }}
                 />
-                {showTagFilter && searchIsFocused && allTags.length > 0 && (
+                {showTagFilter && searchIsFocused && allTags.length > 0 && search.trim() === "" && (
                   <motion.div
                     className="tags-dropdown"
                     initial={{ opacity: 0, y: -10 }}
@@ -199,6 +201,7 @@ const AppHeader = ({
                           key={tag}
                           onMouseDown={(e) => {
                             e.preventDefault();
+                            e.stopPropagation();
                             setSearch("tag:" + tag);
                             setShowTagFilter(false);
                           }}

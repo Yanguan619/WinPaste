@@ -106,7 +106,15 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
 
                     if is_win_v_configured && vk_code == 0x56 && is_down {
                         let win_down = unsafe { (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0) };
-                        if win_down {
+                        // 仅响应精确的 Win+V，排除 Ctrl/Alt/Shift 同时按下（否则 Alt+Win+V 等也会误触发）
+                        let ctrl_down = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0 };
+                        let alt_down = unsafe {
+                            (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0) ||
+                            (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0) ||
+                            (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0)
+                        };
+                        let shift_down = unsafe { GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_SHIFT.0 as i32) as u16 & 0x8000 != 0 };
+                        if win_down && !ctrl_down && !alt_down && !shift_down {
                             crate::info!(">>> [DEBUG] Win+V Hook Trigger activated!");
                             toggle_window(&app_handle);
                             continue;
@@ -282,6 +290,8 @@ pub fn start_input_worker(app_handle: AppHandle, mut rx: tokio::sync::mpsc::Unbo
                                 if action == "escape" {
                                     let _ = app_handle.emit("navigation-action", "escape");
                                     toggle_window(&app_handle);
+                                } else if action == "enter" && IS_SEARCH_FOCUSED.load(Ordering::Relaxed) {
+                                    // 搜索框聚焦时 Enter 交给 WebView2/IME，不发导航事件
                                 } else {
                                     let _ = app_handle.emit("navigation-action", action);
                                 }
@@ -418,7 +428,13 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
 
         if is_win_v_configured && vk == 0x56 {
             let win_down = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000 != 0);
-            if win_down {
+            // 仅拦截精确的 Win+V，避免 Alt+Win+V 等组合被吞掉而无法传递给系统
+            let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000 != 0);
+            let alt_down = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 != 0)
+                || (GetAsyncKeyState(0xA4i32) as u16 & 0x8000 != 0)
+                || (GetAsyncKeyState(0xA5i32) as u16 & 0x8000 != 0);
+            let shift_down = (GetAsyncKeyState(windows::Win32::UI::Input::KeyboardAndMouse::VK_SHIFT.0 as i32) as u16 & 0x8000 != 0);
+            if win_down && !ctrl_down && !alt_down && !shift_down {
                 return LRESULT(1);
             }
         }
@@ -439,15 +455,21 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
 
             // 注意：只拦截上下方向键（0x26, 0x28），不要拦截左右键（0x25, 0x27），否则会导致搜索框无法左右移动光标
             let is_arrow_key = vk == 0x26 || vk == 0x28;
-            let is_enter_esc = vk == 0x0D || vk == 0x1B;
+            let is_enter = vk == 0x0D;
+            let is_escape = vk == 0x1B;
             // 忽略 allow_navigation 设置，强制允许上下键选择，否则默认设置会导致用户认为失效
-            let is_navigation_key = is_arrow_key || is_enter_esc;
+            let is_navigation_key = is_arrow_key || is_enter || is_escape;
 
             // 无论是否聚焦，我们都强行拦截导航键以防 Windows 焦点未成功转移时发生穿透
             if is_navigation_key {
-                // 不再检查 modifiers (Ctrl/Alt/Win)，只要用户按了上下方向键/回车/ESC，就强行拦截
-                // 这解决了用户在唤出面板后物理按键没松开导致拦截失效的问题
-                return LRESULT(1);
+                // 搜索框聚焦时放行 Enter，让 IME 确认候选词 / 前端 keydown 处理（避免与输入法冲突）
+                if is_enter && IS_SEARCH_FOCUSED.load(Ordering::Relaxed) {
+                    // 不拦截，放行给 WebView2
+                } else {
+                    // 不再检查 modifiers (Ctrl/Alt/Win)，只要用户按了上下方向键/回车/ESC，就强行拦截
+                    // 这解决了用户在唤出面板后物理按键没松开导致拦截失效的问题
+                    return LRESULT(1);
+                }
             }
 
             let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;

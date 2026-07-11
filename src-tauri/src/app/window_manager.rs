@@ -440,6 +440,12 @@ pub fn set_navigation_mode(active: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn set_search_focused(focused: bool) -> Result<(), String> {
+    IS_SEARCH_FOCUSED.store(focused, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
     // Temporarily ignore blur events during window activation to prevent focus-fight reset loops
     IGNORE_BLUR.store(true, Ordering::Relaxed);

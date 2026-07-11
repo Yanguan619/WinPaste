@@ -44,6 +44,7 @@ fn main() {
             app::window_manager::focus_clipboard_window,
             app::window_manager::set_navigation_enabled,
             app::window_manager::set_navigation_mode,
+            app::window_manager::set_search_focused,
             app::hooks::set_recording_mode,
             
             services::content_handler::open_content,

@@ -101,7 +101,7 @@ export const useSettingsPostInit = ({
     if (settings["app.hide_tray_icon"] !== undefined) setHideTrayIcon(settings["app.hide_tray_icon"] === 'true');
     if (settings["app.edge_docking"] !== undefined) setEdgeDocking(settings["app.edge_docking"] === 'true');
     if (settings["app.show_search_box"] !== undefined) setShowSearchBox(settings["app.show_search_box"] === 'true');
-    if (settings["app.scroll_top_button_enabled"] !== undefined) setScrollTopButtonEnabled(settings["app.scroll_top_button_enabled"] !== 'false');
+    if (settings["app.show_scroll_top_button"] !== undefined) setScrollTopButtonEnabled(settings["app.show_scroll_top_button"] !== 'false');
     if (settings["app.arrow_key_selection"] !== undefined) setArrowKeySelection(settings["app.arrow_key_selection"] === 'true');
 
     if (settings["app.use_win_v_shortcut"] !== undefined) setRegistryWinVEnabled(settings["app.use_win_v_shortcut"] === 'true');

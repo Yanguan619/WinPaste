@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import type { ClipboardEntry } from "../types";
+import { useHistoryStore } from "../store/historyStore";
 
 interface UseKeyboardNavigationOptions {
   filteredHistory: ClipboardEntry[];
@@ -113,6 +114,8 @@ export const useKeyboardNavigation = ({
       }
 
       if (action === "enter") {
+        // 防御：搜索框聚焦时不粘贴（Enter 应交给 IME/前端 keydown 处理）
+        if (document.activeElement === searchInputRef.current) return;
         const item = historyRef.current[selectedIndexRef.current];
         if (item) {
           copyToClipboard(item.id, item.content, item.content_type, false, item.is_external, item.file_preview_exists);
@@ -177,8 +180,12 @@ export const useKeyboardNavigation = ({
       isKeyboardModeRef.current = false;
       setSelectedIndex(0);
       selectedIndexRef.current = 0;
-      setShowSearchBox(false);
-      setSearch("");
+      // 搜索框有值时保留搜索状态：用户让搜索框失焦是为了查看搜索结果（同时避免
+      // tag 面板遮挡），而不是关闭搜索。仅当无搜索内容时才隐藏搜索框。
+      const currentSearch = useHistoryStore.getState().search;
+      if (currentSearch.trim().length === 0) {
+        setShowSearchBox(false);
+      }
     };
 
     const unlistenBlur = listen("tauri://blur", handleReset);
@@ -298,8 +305,8 @@ export const useKeyboardNavigation = ({
       if (isEnter) {
         if (e.isComposing || e.keyCode === 229) return;
         
-        // Don't copy if focused on some other input
-        if (isInputFocused && !isSearchInputFocused) return;
+        // 任何输入框聚焦（含搜索框）都不粘贴，避免与输入法冲突
+        if (isInputFocused) return;
         
         const item = historyRef.current[selectedIndexRef.current];
         if (item) {
