@@ -1,15 +1,16 @@
 import { open, ask, message } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 
 interface DataSettingsGroupProps {
     t: (key: string) => string;
     collapsed: boolean;
     onToggle: () => void;
     dataPath: string;
+    clearHistory: () => void;
 }
 
-const DataSettingsGroup = ({ t, collapsed, onToggle, dataPath }: DataSettingsGroupProps) => (
+const DataSettingsGroup = ({ t, collapsed, onToggle, dataPath, clearHistory }: DataSettingsGroupProps) => (
     <div className={`settings-group ${collapsed ? 'collapsed' : ''}`}>
         <div className="group-header" onClick={onToggle}>
             <h3 style={{ margin: 0 }}>{t('data_management')}</h3>
@@ -81,6 +82,18 @@ const DataSettingsGroup = ({ t, collapsed, onToggle, dataPath }: DataSettingsGro
                     <div className="data-panel" style={{ fontSize: '11px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
                         {dataPath}
                     </div>
+                </div>
+                <div className="setting-item">
+                    <span className="item-label">{t('clear_history')}</span>
+                    <button
+                        className="btn-icon"
+                        onClick={clearHistory}
+                        title={t('clear_history')}
+                        style={{ width: 'auto', padding: '4px 12px', fontSize: '10px', textTransform: 'uppercase', height: '24px', color: '#ef4444' }}
+                    >
+                        <Trash2 size={12} style={{ marginRight: '4px' }} />
+                        {t('clear')}
+                    </button>
                 </div>
             </div>
         )}

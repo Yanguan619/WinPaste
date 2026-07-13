@@ -133,7 +133,8 @@ export interface SettingsPanelProps {
 
     setShowAppSelector: (val: string | null) => void;
     handleResetSettings: () => void;
-    
+    clearHistory: () => void;
+
     clipboardItemFontSize: number;
     setClipboardItemFontSize: (val: number) => void;
     clipboardTagFontSize: number;
@@ -168,6 +169,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         tagManagerEnabled, setTagManagerEnabled,
         stickyEnabled, onToggleSticky,
         setShowAppSelector, handleResetSettings,
+        clearHistory,
     } = props;
 
     const [emailCopied, setEmailCopied] = useState(false);
@@ -244,12 +246,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 setFollowMouse={setFollowMouse}
                 followCaret={followCaret}
                 setFollowCaret={setFollowCaret}
-                    soundEnabled={soundEnabled}
-                    setSoundEnabled={setSoundEnabled}
-                    soundVolume={soundVolume}
-                    setSoundVolume={setSoundVolume}
-                    pasteSoundEnabled={pasteSoundEnabled}
-                    setPasteSoundEnabled={setPasteSoundEnabled}
+                soundEnabled={soundEnabled}
+                setSoundEnabled={setSoundEnabled}
+                soundVolume={soundVolume}
+                setSoundVolume={setSoundVolume}
+                pasteSoundEnabled={pasteSoundEnabled}
+                setPasteSoundEnabled={setPasteSoundEnabled}
                 showSearchBox={showSearchBox}
                 setShowSearchBox={setShowSearchBox}
                 scrollTopButtonEnabled={scrollTopButtonEnabled}
@@ -369,6 +371,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 collapsed={collapsedGroups['data']}
                 onToggle={() => toggleGroup('data')}
                 dataPath={dataPath}
+                clearHistory={clearHistory}
             />
 
             <SettingsFooter

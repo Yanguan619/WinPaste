@@ -10,6 +10,7 @@ dist/
 # Tauri / Rust build outputs
 src-tauri/target/
 target-codex-*/
+artifacts/
 
 # Runtime files
 *.db

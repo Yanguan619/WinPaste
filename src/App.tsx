@@ -622,6 +622,7 @@ const App = () => {
         saveAppSetting,
         handleResetSettings,
         toggleGroup,
+        clearHistory,
         state: {
             ...settingsState,
             ...historyState,
@@ -655,7 +656,6 @@ const App = () => {
                 t={t}
                 searchInputRef={searchInputRef}
                 allTags={allTags}
-                clearHistory={clearHistory}
                 clearStickies={stickyEnabled ? clearStickies : undefined}
             />
 
