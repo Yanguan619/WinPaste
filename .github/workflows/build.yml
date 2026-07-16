@@ -28,6 +28,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          install-only: true
+          version: latest
+
       - name: Install npm dependencies
         run: npm ci
 

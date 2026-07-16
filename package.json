@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "build:portable": "tauri build --no-bundle --features portable && powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; $out='artifacts/portable'; New-Item -ItemType Directory -Force -Path $out | Out-Null; Get-ChildItem 'src-tauri/target/release' -Filter *.exe | Copy-Item -Destination $out -Force; Compress-Archive -Path (Join-Path $out '*') -DestinationPath (Join-Path $out 'winpaste-portable.zip') -Force\""
+    "build:portable": "tauri build --no-bundle --features portable && powershell -NoProfile -Command \"$ErrorActionPreference='Stop'; $out='artifacts/portable'; New-Item -ItemType Directory -Force -Path $out | Out-Null; Get-ChildItem 'src-tauri/target/release' -Filter *.exe | Copy-Item -Destination $out -Force; upx --best (Join-Path $out '*.exe'); Remove-Item -Path (Join-Path $out 'winpaste-portable.zip') -Force -ErrorAction SilentlyContinue; Compress-Archive -Path (Join-Path $out '*') -DestinationPath (Join-Path $out 'winpaste-portable.zip') -Force\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
