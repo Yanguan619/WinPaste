@@ -22,6 +22,12 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
