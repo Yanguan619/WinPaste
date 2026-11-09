@@ -424,13 +424,33 @@ pub fn hide_compact_preview(app: &AppHandle) {
     }
 }
 
+/// 轻量模式下"隐藏后延迟释放"的代际令牌：唤出时自增即可取消待执行的释放。
+static LIGHTWEIGHT_RELEASE_TOKEN: AtomicU64 = AtomicU64::new(0);
+
+/// 轻量模式：隐藏后等 5 分钟再销毁 WebView。连续粘贴时面板保持热态（秒开），
+/// 长时间不用才真正释放内存。期间若重新唤出，令牌变化使本次释放作废。
+fn schedule_lightweight_release(app: AppHandle) {
+    let token = LIGHTWEIGHT_RELEASE_TOKEN.fetch_add(1, Ordering::Relaxed) + 1;
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        if LIGHTWEIGHT_RELEASE_TOKEN.load(Ordering::Relaxed) != token {
+            return;
+        }
+        if app
+            .get_webview_window("main")
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        crate::info!(">>> [LIGHTWEIGHT] releasing panel webview after 5min idle");
+        destroy_main_window(&app);
+    });
+}
+
 /// Hide the main window; in lightweight mode destroy it instead so the webview is released.
 pub fn hide_main_window_or_destroy(app: &AppHandle, restore_focus: bool) {
     let lightweight = app.state::<SettingsState>().lightweight_mode.load(Ordering::Relaxed);
-    if lightweight {
-        destroy_main_window(app);
-        return;
-    }
 
     // 兜底:主面板隐藏时预览窗必须一起消失,不能只依赖前端事件监听(#54)。
     hide_compact_preview(app);
@@ -447,6 +467,10 @@ pub fn hide_main_window_or_destroy(app: &AppHandle, restore_focus: bool) {
             let _ = restore_last_focus(app.clone());
         }
         let _ = app.emit("window-hidden", ());
+    }
+
+    if lightweight {
+        schedule_lightweight_release(app.clone());
     }
 }
 
@@ -477,6 +501,9 @@ pub fn is_lightweight(app: &AppHandle) -> bool {
 }
 
 pub fn toggle_window(app: &AppHandle) {
+    // 唤出即取消待执行的"延迟释放"，避免面板刚显示就被销毁
+    LIGHTWEIGHT_RELEASE_TOKEN.fetch_add(1, Ordering::Relaxed);
+
     // 轻量模式下面板是"销毁"状态而不是隐藏状态：这里按需重建
     // （rebuild_main_window 会还原尺寸/置顶/子类化），代价是唤出多几百毫秒。
     if is_lightweight(app) {
