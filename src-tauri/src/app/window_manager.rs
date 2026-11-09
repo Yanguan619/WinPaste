@@ -342,6 +342,7 @@ fn persisted_window_size(app: &AppHandle) -> (f64, f64) {
 /// Rebuild the `main` window from its config, re-applying runtime state that is otherwise
 /// only set once at startup (pinned/focusable, persisted size, WS_EX_NOACTIVATE, taskbar subclass).
 pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    let started = std::time::Instant::now();
     let config = app.config().app.windows.iter().find(|c| c.label == "main").cloned()?;
     let pinned = WINDOW_PINNED.load(Ordering::Relaxed);
 
@@ -359,6 +360,11 @@ pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     builder = builder.inner_size(w, h);
 
     let window = builder.build().ok()?;
+    crate::info!(
+        ">>> [LIGHTWEIGHT] main window rebuilt in {}ms (warm={})",
+        started.elapsed().as_millis(),
+        app.get_webview_window("warm").is_some()
+    );
 
     // 新 webview 启动期间不会有前端回执；不清零会让健康检查把"还没加载完"
     // 误判成"渲染进程已死"，触发 reload 把刚建好的面板重载掉。
