@@ -8,7 +8,6 @@ import {
   Grid3X3,
   Pin,
   PinOff,
-  Search,
   Settings as SettingsIcon,
   Tag,
   X
@@ -76,27 +75,105 @@ const AppHeader = ({
     }
   }, []);
 
+  const chipStyle = (active: boolean) => ({
+    width: 'auto',
+    padding: '4px 8px',
+    fontSize: '11px',
+    borderRadius: '4px',
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
+    opacity: active ? 1 : 0.7
+  });
+
   return (
   <header onMouseDown={handleMouseDown}>
     <div className="header-top">
       <div className="header-leading">
-        {(showSettings || showTagManager) && (
-          <button className="btn-icon" onClick={() => {
-            if (showTagManager) setShowTagManager(false);
-            else setShowSettings(false);
-          }}>
-            <ChevronLeft size={18} />
-          </button>
+        {(showSettings || showTagManager) ? (
+          <>
+            <button className="btn-icon" onClick={() => {
+              if (showTagManager) setShowTagManager(false);
+              else setShowSettings(false);
+            }}>
+              <ChevronLeft size={18} />
+            </button>
+            <div className="header-drag-region" style={{ flex: 1, alignSelf: 'stretch' }}>
+              <span className="header-title">
+                {showTagManager && tagManagerEnabled
+                  ? (t('tag_manager') || '标签管理')
+                  : t('settings')}
+              </span>
+            </div>
+          </>
+        ) : (
+          <div style={{ position: 'relative', flex: 1 }}>
+            {searchMode === 'apps' ? <Grid3X3 size={14} className="search-icon" />
+              : searchMode === 'files' ? <FileSearch size={14} className="search-icon" />
+              : <Clipboard size={14} className="search-icon" />}
+            <input
+              ref={searchInputRef}
+              type="text"
+              className={`search-input ${showTagFilter && allTags.length > 0 && search.trim() === "" ? 'dropdown-open' : ''}`}
+              placeholder={searchMode === 'apps' ? t('search_placeholder_apps') : searchMode === 'files' ? t('search_placeholder_files') : t('search_placeholder')}
+              value={search}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={(e) => {
+                setIsComposing(false);
+                setSearch((e.target as HTMLInputElement).value);
+              }}
+              onChange={(e) => {
+                setSearch(e.target.value);
+              }}
+              onMouseDown={() => {
+                invoke("activate_window_focus").catch(console.error);
+              }}
+              onClick={() => { setShowTagFilter(true); setEditingTagsId(null); }}
+              onFocus={() => {
+                invoke("activate_window_focus").catch(console.error);
+                invoke("set_search_focused", { focused: true }).catch(console.error);
+                setShowTagFilter(true);
+                setSearchIsFocused(true);
+                setEditingTagsId(null);
+              }}
+              onBlur={() => {
+                invoke("set_search_focused", { focused: false }).catch(console.error);
+                setTimeout(() => {
+                  setShowTagFilter(false);
+                  setSearchIsFocused(false);
+                }, 200);
+              }}
+            />
+            {showTagFilter && searchIsFocused && allTags.length > 0 && search.trim() === "" && (
+              <motion.div
+                className="tags-dropdown"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.15, delay: 0.15, ease: "easeOut" }}
+              >
+                <div className="tags-label">{t('tags') || "Tags"}</div>
+                <div className="tags-list">
+                  {allTags.map(tag => (
+                    <span
+                      className="tag-chip"
+                      key={tag}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSearch("tag:" + tag);
+                        setShowTagFilter(false);
+                      }}
+                      data-tag={tag}
+                      style={{ background: getTagColor(tag, "fluent") }}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </div>
         )}
-        <div className="header-drag-region" style={{ flex: 1, alignSelf: 'stretch' }}>
-          <span className="header-title">
-            {showTagManager && tagManagerEnabled
-                ? (t('tag_manager') || '标签管理')
-                : showSettings
-                  ? t('settings')
-                  : ''}
-          </span>
-        </div>
       </div>
       <div style={{ display: 'flex', gap: '4px' }}>
         <button
@@ -146,79 +223,14 @@ const AppHeader = ({
             style={{ flexShrink: 0 }}
           >
             <div className="search-container">
-              <div style={{ position: 'relative' }}>
-                {searchMode === 'apps' ? <Grid3X3 size={14} className="search-icon" />
-                  : searchMode === 'files' ? <FileSearch size={14} className="search-icon" />
-                  : <Search size={14} className="search-icon" />}
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  className={`search-input ${showTagFilter && allTags.length > 0 && search.trim() === "" ? 'dropdown-open' : ''}`}
-                  placeholder={searchMode === 'apps' ? t('search_placeholder_apps') : searchMode === 'files' ? t('search_placeholder_files') : t('search_placeholder')}
-                  value={search}
-                  onCompositionStart={() => setIsComposing(true)}
-                  onCompositionEnd={(e) => {
-                    setIsComposing(false);
-                    setSearch((e.target as HTMLInputElement).value);
-                  }}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                  }}
-                  onMouseDown={() => {
-                    invoke("activate_window_focus").catch(console.error);
-                  }}
-                  onClick={() => { setShowTagFilter(true); setEditingTagsId(null); }}
-                  onFocus={() => {
-                    invoke("activate_window_focus").catch(console.error);
-                    invoke("set_search_focused", { focused: true }).catch(console.error);
-                    setShowTagFilter(true);
-                    setSearchIsFocused(true);
-                    setEditingTagsId(null);
-                  }}
-                  onBlur={() => {
-                    invoke("set_search_focused", { focused: false }).catch(console.error);
-                    setTimeout(() => {
-                      setShowTagFilter(false);
-                      setSearchIsFocused(false);
-                    }, 200);
-                  }}
-                />
-                {showTagFilter && searchIsFocused && allTags.length > 0 && search.trim() === "" && (
-                  <motion.div
-                    className="tags-dropdown"
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.15, delay: 0.15, ease: "easeOut" }}
-                  >
-                    <div className="tags-label">{t('tags') || "Tags"}</div>
-                    <div className="tags-list">
-                      {allTags.map(tag => (
-                        <span
-                          className="tag-chip"
-                          key={tag}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setSearch("tag:" + tag);
-                            setShowTagFilter(false);
-                          }}
-                          data-tag={tag}
-                          style={{ background: getTagColor(tag, "fluent") }}
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
-              </div>
               <div
                 className="hide-scrollbar"
                 style={{
                   display: 'flex',
                   gap: '6px',
-                  padding: '8px 0 0 0',
+                  padding: '0',
+                  height: '24px',
+                  alignItems: 'center',
                   overflowX: 'auto',
                   scrollbarWidth: 'none',
                   msOverflowStyle: 'none',
@@ -236,15 +248,7 @@ const AppHeader = ({
                     setSearchMode('clipboard');
                     setTypeFilter(null);
                   }}
-                  style={{
-                    width: 'auto',
-                    padding: '4px 8px',
-                    fontSize: '11px',
-                    borderRadius: '4px',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                    opacity: searchMode === 'clipboard' ? 1 : 0.7
-                  }}
+                  style={chipStyle(searchMode === 'clipboard')}
                   title={t('clipboard') || '剪贴板'}
                 >
                   <Clipboard size={12} style={{ marginRight: '4px', display: 'inline' }} />
@@ -258,15 +262,7 @@ const AppHeader = ({
                         setSearchMode('apps');
                         setTypeFilter(null);
                       }}
-                      style={{
-                        width: 'auto',
-                        padding: '4px 8px',
-                        fontSize: '11px',
-                        borderRadius: '4px',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0,
-                        opacity: searchMode === 'apps' ? 1 : 0.7
-                      }}
+                      style={chipStyle(searchMode === 'apps')}
                       title={t('apps') || '应用'}
                     >
                       <Grid3X3 size={12} style={{ marginRight: '4px', display: 'inline' }} />
@@ -278,15 +274,7 @@ const AppHeader = ({
                         setSearchMode('files');
                         setTypeFilter(null);
                       }}
-                      style={{
-                        width: 'auto',
-                        padding: '4px 8px',
-                        fontSize: '11px',
-                        borderRadius: '4px',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0,
-                        opacity: searchMode === 'files' ? 1 : 0.7
-                      }}
+                      style={chipStyle(searchMode === 'files')}
                       title={t('files') || '文件'}
                     >
                       <FileSearch size={12} style={{ marginRight: '4px', display: 'inline' }} />
@@ -299,22 +287,13 @@ const AppHeader = ({
                     key={t}
                     className={`btn-icon ${typeFilter === t ? 'active' : ''}`}
                     onClick={() => setTypeFilter(typeFilter === t ? null : t)}
-                    style={{
-                      width: 'auto',
-                      padding: '4px 8px',
-                      fontSize: '11px',
-                      borderRadius: '4px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      opacity: typeFilter === t ? 1 : 0.7
-                    }}
+                    style={chipStyle(typeFilter === t)}
                     title={getTypeName(t)}
                   >
                     {getTypeName(t)}
                   </button>
                 ))}
               </div>
-
             </div>
           </motion.div>
         )}
