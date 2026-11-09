@@ -21,15 +21,15 @@ export interface ClipboardItemProps {
   disableLayout?: boolean;
 }
 
-export type ClipboardRenderItem = (
-  item: ClipboardEntry,
+export type ClipboardRenderItem<T = ClipboardEntry> = (
+  item: T,
   index: number,
   isFirst: boolean
 ) => ReactNode;
 
-export interface VirtualClipboardListProps {
-  items: ClipboardEntry[];
-  renderItem: ClipboardRenderItem;
+export interface VirtualClipboardListProps<T = ClipboardEntry> {
+  items: T[];
+  renderItem: ClipboardRenderItem<T>;
   onLoadMore?: () => void;
   hasMore: boolean;
   isLoading: boolean;

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import type { ClipboardEntry } from "../types";
-import { useHistoryStore } from "../store/historyStore";
+import { useHistoryStore, type SearchMode } from "../store/historyStore";
 
 interface UseKeyboardNavigationOptions {
   filteredHistory: ClipboardEntry[];
@@ -27,6 +27,13 @@ interface UseKeyboardNavigationOptions {
   openContent: (item: ClipboardEntry) => void;
   setSearch: Dispatch<SetStateAction<string>>;
   setShowSearchBox: (show: boolean) => void;
+  searchMode?: SearchMode;
+  filteredApps?: { path: string }[];
+  filteredFiles?: { full_path: string }[];
+  onLaunchApp?: (path: string) => void;
+  onOpenFile?: (path: string) => void;
+  search?: string;
+  onBrowserSearch?: (query: string) => void;
 }
 
 export const useKeyboardNavigation = ({
@@ -43,14 +50,24 @@ export const useKeyboardNavigation = ({
   copyToClipboard,
   openContent,
   setSearch,
-  setShowSearchBox
+  setShowSearchBox,
+  searchMode,
+  filteredApps = [],
+  filteredFiles = [],
+  onLaunchApp,
+  onOpenFile,
+  search = "",
+  onBrowserSearch
 }: UseKeyboardNavigationOptions) => {
   const selectedIndexRef = useRef(selectedIndex);
   const isKeyboardModeRef = useRef(isKeyboardMode);
+  const searchRef = useRef(search);
   const historyRef = useRef(filteredHistory);
   const showSettingsRef = useRef(showSettings);
   const showTagManagerRef = useRef(showTagManager);
   const editingTagsIdRef = useRef(editingTagsId);
+  const searchModeRef = useRef(searchMode);
+  const filteredAppsRef = useRef(filteredApps);
 
   useEffect(() => { selectedIndexRef.current = selectedIndex; }, [selectedIndex]);
   useEffect(() => { isKeyboardModeRef.current = isKeyboardMode; }, [isKeyboardMode]);
@@ -58,6 +75,11 @@ export const useKeyboardNavigation = ({
   useEffect(() => { showSettingsRef.current = showSettings; }, [showSettings]);
   useEffect(() => { showTagManagerRef.current = showTagManager; }, [showTagManager]);
   useEffect(() => { editingTagsIdRef.current = editingTagsId; }, [editingTagsId]);
+  useEffect(() => { searchModeRef.current = searchMode; }, [searchMode]);
+  useEffect(() => { filteredAppsRef.current = filteredApps; }, [filteredApps]);
+  const filteredFilesRef = useRef(filteredFiles);
+  useEffect(() => { filteredFilesRef.current = filteredFiles; }, [filteredFiles]);
+  useEffect(() => { searchRef.current = search; }, [search]);
 
   useEffect(() => {
     // 监听 Rust 全局键盘钩子发送的导航事件
@@ -81,21 +103,25 @@ export const useKeyboardNavigation = ({
 
       if (action === "up" || action === "down") {
         const isArrowDown = action === "down";
+        const isExternalList = searchModeRef.current === 'apps' || searchModeRef.current === 'files';
+        const navItems = isExternalList
+          ? (searchModeRef.current === 'files' ? filteredFilesRef.current : filteredAppsRef.current)
+          : historyRef.current;
         
         if (!isKeyboardModeRef.current) {
           setIsKeyboardMode(true);
           isKeyboardModeRef.current = true;
           
           const currentIdx = selectedIndexRef.current;
-          const isValidIdx = currentIdx >= 0 && currentIdx < historyRef.current.length;
+          const isValidIdx = currentIdx >= 0 && currentIdx < navItems.length;
           
           let nextIdx = 0;
           if (isValidIdx) {
               nextIdx = isArrowDown
-                  ? Math.min(historyRef.current.length - 1, currentIdx + 1)
+                  ? Math.min(navItems.length - 1, currentIdx + 1)
                   : Math.max(0, currentIdx - 1);
           } else {
-              nextIdx = isArrowDown ? 0 : historyRef.current.length - 1;
+              nextIdx = isArrowDown ? 0 : navItems.length - 1;
           }
           
           setSelectedIndex(nextIdx);
@@ -106,7 +132,7 @@ export const useKeyboardNavigation = ({
         const dir = isArrowDown ? 1 : -1;
         const nextIndex = Math.max(
           0,
-          Math.min(historyRef.current.length - 1, selectedIndexRef.current + dir)
+          Math.min(navItems.length - 1, selectedIndexRef.current + dir)
         );
         setSelectedIndex(nextIndex);
         selectedIndexRef.current = nextIndex;
@@ -116,6 +142,33 @@ export const useKeyboardNavigation = ({
       if (action === "enter") {
         // 防御：搜索框聚焦时不粘贴（Enter 应交给 IME/前端 keydown 处理）
         if (document.activeElement === searchInputRef.current) return;
+        
+        const isExternalList = searchModeRef.current === 'apps' || searchModeRef.current === 'files';
+        const navItems = isExternalList
+          ? (searchModeRef.current === 'files' ? filteredFilesRef.current : filteredAppsRef.current)
+          : historyRef.current;
+        
+        if (navItems.length === 0 && searchRef.current.trim() && onBrowserSearch) {
+            onBrowserSearch(searchRef.current);
+            return;
+        }
+        
+        if (searchModeRef.current === 'apps') {
+            const app = filteredAppsRef.current[selectedIndexRef.current];
+            if (app && onLaunchApp) {
+                onLaunchApp(app.path);
+            }
+            return;
+        }
+
+        if (searchModeRef.current === 'files') {
+            const file = filteredFilesRef.current[selectedIndexRef.current];
+            if (file && onOpenFile) {
+                onOpenFile(file.full_path);
+            }
+            return;
+        }
+        
         const item = historyRef.current[selectedIndexRef.current];
         if (item) {
           copyToClipboard(item.id, item.content, item.content_type, false, item.is_external, item.file_preview_exists);
@@ -269,21 +322,26 @@ export const useKeyboardNavigation = ({
         
         e.preventDefault();
         console.log(`[KeyboardNav Debug] Processing navigation. isKeyboardModeRef.current: ${isKeyboardModeRef.current}, currentIdx: ${selectedIndexRef.current}`);
+
+        const isExternalList = searchModeRef.current === 'apps' || searchModeRef.current === 'files';
+        const navItems = isExternalList
+          ? (searchModeRef.current === 'files' ? filteredFilesRef.current : filteredAppsRef.current)
+          : historyRef.current;
         
         if (!isKeyboardModeRef.current) {
           setIsKeyboardMode(true);
           isKeyboardModeRef.current = true;
           // Use current selection if valid, otherwise jump to start/end
           const currentIdx = selectedIndexRef.current;
-          const isValidIdx = currentIdx >= 0 && currentIdx < historyRef.current.length;
+          const isValidIdx = currentIdx >= 0 && currentIdx < navItems.length;
           
           let nextIdx = 0;
           if (isValidIdx) {
               nextIdx = isArrowDown
-                  ? Math.min(historyRef.current.length - 1, currentIdx + 1)
+                  ? Math.min(navItems.length - 1, currentIdx + 1)
                   : Math.max(0, currentIdx - 1);
           } else {
-              nextIdx = isArrowDown ? 0 : historyRef.current.length - 1;
+              nextIdx = isArrowDown ? 0 : navItems.length - 1;
           }
           
           setSelectedIndex(nextIdx);
@@ -294,7 +352,7 @@ export const useKeyboardNavigation = ({
         const dir = isArrowDown ? 1 : -1;
         const nextIndex = Math.max(
           0,
-          Math.min(historyRef.current.length - 1, selectedIndexRef.current + dir)
+          Math.min(navItems.length - 1, selectedIndexRef.current + dir)
         );
         setSelectedIndex(nextIndex);
         selectedIndexRef.current = nextIndex;

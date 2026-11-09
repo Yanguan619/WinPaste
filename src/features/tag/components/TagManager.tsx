@@ -27,7 +27,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [newTagName, setNewTagName] = useState('');
     const [loading, setLoading] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('grid');
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [isDeleting, setIsDeleting] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ show: boolean, tagName: string | null }>({ show: false, tagName: null });
     const [itemDeleteConfirmation, setItemDeleteConfirmation] = useState<{ show: boolean, id: number | null }>({ show: false, id: null });
@@ -207,7 +207,6 @@ export default function TagManager({ t, theme }: TagManagerProps) {
             {/* Tags bar: header + search in one row, then chips */}
             <div className="tag-sidebar">
                 <div className="tag-top-bar">
-                    <span className="header-label">{t('tags')}</span>
                     <div className="tag-search-box">
                         <Search size={14} className="search-icon-placeholder" />
                         <input

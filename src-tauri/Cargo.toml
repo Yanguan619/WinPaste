@@ -10,6 +10,8 @@ default-run = "winpaste-app"
 
 [features]
 portable = []
+app-search = []
+dhat-heap = ["dep:dhat"]   # 启用堆内存分析，运行时生成 dhat-heap.json
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -45,6 +47,7 @@ regex = "1.12.2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tokio-util = { version = "0.7.18", features = ["io"] }
+lru = "0.12"
 futures = "0.3.31"
 uuid = { version = "1.19.0", features = ["v4"] }
 mime_guess = "2.0.5"
@@ -59,11 +62,33 @@ windows-version = "0.1.1"
 dotenvy = "0.15"
 tauri-plugin-notification = "2"
 
+# 内存分析（仅 profiling 构建）
+dhat = { version = "0.3", optional = true }
+
+# ============ Profiling 构建配置 ============
+[profile.profiling]
+inherits = "release"
+debug = 1          # 保留调试信息用于 dhat 符号化
+strip = false      # 不要剥离符号
+lto = false        # LTO 会拖慢 profiling 构建
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Controls", "Win32_Security_Cryptography", "Win32_UI_Accessibility", "Win32_UI_Input_Ime", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_Storage_FileSystem"] }
 windows-core = "0.61"
 windows-version = "0.1.1"
 winreg = "0.55.0"
+
+# ============ Dev 编译速度优化 ============
+[profile.dev]
+opt-level = 0
+# 减少调试信息级别（2→1），大幅加速编译
+debug = 1
+# 并行代码生成
+codegen-units = 256
+# 不做 LTO
+lto = false
+# 不做 panic unwind
+panic = "unwind"
 
 # ============ Release 体积优化 ============
 [profile.release]

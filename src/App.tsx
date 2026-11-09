@@ -131,6 +131,7 @@ const App = () => {
         settingsLoaded,
         sequentialMode,
         colorMode,
+        installedApps,
     } = settingsState;
 
     const {
@@ -152,6 +153,7 @@ const App = () => {
         isKeyboardMode,
         setIsKeyboardMode,
         typeFilter,
+        searchMode,
     } = historyState;
 
     const {
@@ -173,6 +175,7 @@ const App = () => {
         setIsRecordingRich,
         isRecordingSearch,
         setIsRecordingSearch,
+        setAppSearchEnabled,
     } = uiState;
 
     // Adapters for legacy hooks that expect React.Dispatch<React.SetStateAction<T>>
@@ -208,11 +211,23 @@ const App = () => {
     });
 
     const showScrollTopVisible = showScrollTop && scrollTopButtonEnabled;
+    const [showAppsScrollTop, setShowAppsScrollTop] = useState(false);
+    const [showFilesScrollTop, setShowFilesScrollTop] = useState(false);
+    const showAppsScrollTopVisible = showAppsScrollTop && scrollTopButtonEnabled;
+    const showFilesScrollTopVisible = showFilesScrollTop && scrollTopButtonEnabled;
 
     const handleListScroll = useCallback((offset: number) => {
         handleSearchScroll(offset);
         setShowScrollTop(offset > 200);
     }, [handleSearchScroll]);
+
+    const handleAppsListScroll = useCallback((offset: number) => {
+        setShowAppsScrollTop(offset > 200);
+    }, []);
+
+    const handleFilesListScroll = useCallback((offset: number) => {
+        setShowFilesScrollTop(offset > 200);
+    }, []);
 
     const handleScrollTop = useCallback(() => {
         if (virtualListRef.current?.scrollToTop) {
@@ -220,6 +235,14 @@ const App = () => {
             return;
         }
         virtualListRef.current?.scrollToItem(0);
+    }, []);
+
+    const handleAppsScrollTop = useCallback(() => {
+        setShowAppsScrollTop(false);
+    }, []);
+
+    const handleFilesScrollTop = useCallback(() => {
+        setShowFilesScrollTop(false);
     }, []);
 
     const toggleGroup = (group: string) => {
@@ -315,8 +338,19 @@ const App = () => {
         settings
     });
 
+    useAppBootstrap({
+        setDataPath: setDataPath as any,
+        setInstalledApps: setInstalledApps as any,
+        setAutoStart: setAutoStart as any,
+        setWinClipboardDisabled: setWinClipboardDisabled as any,
+        setDefaultApps: setDefaultAppsAdapter,
+        setAppSearchEnabled: setAppSearchEnabled as any
+    });
+
     useEffect(() => {
         const unlistenShow = listen("window-shown", () => {
+            const container = document.querySelector(".app-container");
+            if (container) container.classList.remove("shrinking");
             if (virtualListRef.current?.scrollToTop) {
                 virtualListRef.current.scrollToTop();
             } else {
@@ -347,10 +381,15 @@ const App = () => {
             }
         });
 
+        const unlistenHiding = listen("window-hiding", () => {
+            invoke("complete_hide_window").catch(console.error);
+        });
+
         return () => {
             unlistenShow.then((off) => off());
             unlistenSearchFocus.then((off) => off());
             unlistenHidden.then((off) => off());
+            unlistenHiding.then((off) => off());
         };
     }, [
         setShowSettings,
@@ -370,14 +409,6 @@ const App = () => {
             setShowTagManager(false);
         }
     }, [tagManagerEnabled, showTagManager, setShowTagManager]);
-
-    useAppBootstrap({
-        setDataPath: setDataPath as any,
-        setInstalledApps: setInstalledApps as any,
-        setAutoStart: setAutoStart as any,
-        setWinClipboardDisabled: setWinClipboardDisabled as any,
-        setDefaultApps: setDefaultAppsAdapter
-    });
 
     useWindowPinnedListener({
         onPinnedChange: setIsWindowPinned as any
@@ -555,6 +586,169 @@ const App = () => {
     const navigationHistory = unpinnedItems;
     const pinnedCount = pinnedItems.length;
 
+    const [appIcons, setAppIcons] = useState<Record<string, string>>({});
+    const [loadedIconCount, setLoadedIconCount] = useState(0);
+    const [appsResults, setAppsResults] = useState<{ name: string; path: string }[]>([]);
+    const [appsLoading, setAppsLoading] = useState(false);
+    const [fileResults, setFileResults] = useState<{ name: string; path: string; full_path: string; is_folder: boolean }[]>([]);
+    const [filesLoading, setFilesLoading] = useState(false);
+
+    // apps 列表：搜索关键字非空时使用实时搜索结果，否则回退到启动时缓存的 installedApps
+    const filteredApps = useMemo(() => {
+        if (searchMode !== 'apps') return [];
+        const source = search.trim() ? appsResults : installedApps.map(app => ({ name: app.label, path: app.value }));
+        return source.map(app => ({
+            name: app.name,
+            path: app.path,
+            icon: appIcons[app.path]
+        }));
+    }, [searchMode, search, appsResults, installedApps, appIcons]);
+
+    const loadAppIcons = useCallback(async (apps: { path: string }[], startIndex: number, count: number) => {
+        const appsToLoad = apps.slice(startIndex, startIndex + count);
+        const loadPromises = appsToLoad.map(async (app) => {
+            try {
+                const icon = await invoke<string | null>("get_executable_icon", { executablePath: app.path });
+                return { path: app.path, icon };
+            } catch {
+                return { path: app.path, icon: null };
+            }
+        });
+
+        const results = await Promise.all(loadPromises);
+        const newIcons: Record<string, string> = {};
+        for (const { path, icon } of results) {
+            if (icon) {
+                newIcons[path] = icon;
+            }
+        }
+        setAppIcons(prev => ({ ...prev, ...newIcons }));
+        setLoadedIconCount(prev => Math.min(prev + count, apps.length));
+    }, []);
+
+    // 实时调用 search_apps（通过 Everything）
+    const searchApps = useCallback(async (keyword: string) => {
+        if (!keyword.trim()) {
+            setAppsResults([]);
+            return;
+        }
+        setAppsLoading(true);
+        try {
+            const results = await invoke<{ name: string; path: string }[]>("search_apps", {
+                keyword,
+                maxResults: 200
+            });
+            setAppsResults(results || []);
+        } catch (e) {
+            console.error("Failed to search apps:", e);
+            setAppsResults([]);
+        } finally {
+            setAppsLoading(false);
+        }
+    }, []);
+
+    const debouncedAppSearch = useDebounce(search, 300);
+
+    useEffect(() => {
+        if (searchMode === 'apps') {
+            searchApps(debouncedAppSearch);
+        } else {
+            setAppsResults([]);
+        }
+    }, [searchMode, debouncedAppSearch, searchApps]);
+
+    // 当 apps 列表内容变化时重置图标加载进度
+    useEffect(() => {
+        setLoadedIconCount(0);
+    }, [appsResults, searchMode, search.trim()]);
+
+    // 初始加载图标：进入 apps 模式或列表刷新时
+    useEffect(() => {
+        if (searchMode !== 'apps' || loadedIconCount !== 0) return;
+        const source: { path: string }[] = search.trim()
+            ? appsResults
+            : installedApps.map(app => ({ path: app.value }));
+        if (source.length === 0) return;
+        loadAppIcons(source, 0, 15);
+    }, [searchMode, search, appsResults, installedApps, loadedIconCount, loadAppIcons]);
+
+    // 增量加载图标
+    useEffect(() => {
+        if (searchMode !== 'apps') return;
+        const source: { path: string }[] = search.trim()
+            ? appsResults
+            : installedApps.map(app => ({ path: app.value }));
+        if (source.length === 0) return;
+        if (filteredApps.length > loadedIconCount && loadedIconCount < source.length) {
+            const nextBatch = Math.min(20, source.length - loadedIconCount);
+            loadAppIcons(source, loadedIconCount, nextBatch);
+        }
+    }, [searchMode, search, appsResults, installedApps, filteredApps.length, loadedIconCount, loadAppIcons]);
+
+    const filteredFiles = useMemo(() => {
+        if (searchMode !== 'files') return [];
+        return fileResults;
+    }, [searchMode, fileResults]);
+
+    const searchFiles = useCallback(async (keyword: string) => {
+        if (!keyword.trim()) {
+            setFileResults([]);
+            return;
+        }
+        setFilesLoading(true);
+        try {
+            const results = await invoke<{ name: string; path: string; full_path: string; is_folder: boolean }[]>("search_files", {
+                keyword,
+                maxResults: 200
+            });
+            setFileResults(results || []);
+        } catch (e) {
+            console.error("Failed to search files:", e);
+            setFileResults([]);
+        } finally {
+            setFilesLoading(false);
+        }
+    }, []);
+
+    const debouncedFileSearch = useDebounce(search, 300);
+
+    useEffect(() => {
+        if (searchMode === 'files') {
+            searchFiles(debouncedFileSearch);
+        } else {
+            setFileResults([]);
+        }
+    }, [searchMode, debouncedFileSearch, searchFiles]);
+
+    const launchApp = useCallback(async (appPath: string) => {
+        try {
+            await invoke("launch_app", { appPath });
+            invoke("hide_window_cmd").catch(console.error);
+        } catch (e) {
+            console.error("Failed to launch app:", e);
+        }
+    }, []);
+
+    const openFile = useCallback(async (filePath: string) => {
+        try {
+            await invoke("open_file", { filePath });
+            invoke("hide_window_cmd").catch(console.error);
+        } catch (e) {
+            console.error("Failed to open file:", e);
+        }
+    }, []);
+
+    const launchBrowserSearch = useCallback(async (query: string) => {
+        try {
+            const encodedQuery = encodeURIComponent(query);
+            const searchUrl = `https://www.bing.com/search?q=${encodedQuery}`;
+            await invoke("open_url", { url: searchUrl });
+            invoke("hide_window_cmd").catch(console.error);
+        } catch (e) {
+            console.error("Failed to open browser search:", e);
+        }
+    }, []);
+
     const setSelectedIndexAdapterVirtual = useCallback((action: React.SetStateAction<number>) => {
         if (typeof action === 'function') {
             const currentGlobalIdx = useHistoryStore.getState().selectedIndex;
@@ -592,7 +786,14 @@ const App = () => {
         copyToClipboard,
         openContent,
         setSearch: setSearch as any,
-        setShowSearchBox
+        setShowSearchBox,
+        searchMode,
+        filteredApps,
+        filteredFiles,
+        onLaunchApp: launchApp,
+        onOpenFile: openFile,
+        search,
+        onBrowserSearch: launchBrowserSearch
     });
 
     const { renderItemContent } = useClipboardItemRenderer({
@@ -680,6 +881,21 @@ const App = () => {
                     stickyEnabled={stickyEnabled}
                     showScrollTop={showScrollTopVisible}
                     onScrollTop={handleScrollTop}
+                    searchMode={searchMode}
+                    filteredApps={filteredApps}
+                    filteredFiles={filteredFiles}
+                    onLaunchApp={launchApp}
+                    onOpenFile={openFile}
+                    onLaunchBrowserSearch={launchBrowserSearch}
+                    filesLoading={filesLoading}
+                    appsLoading={appsLoading}
+                    onAppsListScroll={handleAppsListScroll}
+                    onFilesListScroll={handleFilesListScroll}
+                    onAppsScrollTop={handleAppsScrollTop}
+                    onFilesScrollTop={handleFilesScrollTop}
+                    showAppsScrollTop={showAppsScrollTopVisible}
+                    showFilesScrollTop={showFilesScrollTopVisible}
+                    itemCount={searchMode === 'apps' ? filteredApps.length : searchMode === 'files' ? filteredFiles.length : filteredHistory.length}
                 />
             </main>
 

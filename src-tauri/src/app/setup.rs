@@ -77,7 +77,11 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     
     // 7. Background Services & Monitors
     start_services(app, &settings, app_handle.clone());
-    
+
+    // 7.5 Pre-detect Everything status at startup (once, never re-detect on window show)
+    #[cfg(feature = "app-search")]
+    crate::infrastructure::windows_api::everything_search::init_everything_status();
+
     // 8. Tray Setup
     setup_tray(app, settings.hide_tray_icon);
     
@@ -104,7 +108,10 @@ fn resolve_data_dir(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error:
     let default_app_dir = app.path().app_data_dir()?;
     
     // Cleanup temp files
-    std::thread::spawn(|| {
+    std::thread::Builder::new()
+        .name("temp-cleanup".to_string())
+        .stack_size(1_048_576)
+        .spawn(|| {
         let temp_dir = std::env::temp_dir();
         if let Ok(entries) = std::fs::read_dir(&temp_dir) {
             for entry in entries.flatten() {
@@ -115,7 +122,7 @@ fn resolve_data_dir(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error:
                 }
             }
         }
-    });
+    }).expect("spawn temp-cleanup thread");
 
     let redirect_file = default_app_dir.join("datapath.txt");
     let mut app_dir = if redirect_file.exists() {
@@ -374,7 +381,10 @@ fn start_services(app: &App, s: &StartupSettings, app_handle: AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn start_edge_docking_monitor(app_handle: AppHandle) {
-    std::thread::spawn(move || {
+    std::thread::Builder::new()
+        .name("edge-dock".to_string())
+        .stack_size(2_097_152)
+        .spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(150));
 
@@ -634,7 +644,7 @@ fn start_edge_docking_monitor(app_handle: AppHandle) {
                 }
             }
         }
-    });
+    }).expect("spawn edge-dock thread");
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -663,7 +673,10 @@ fn init_announcement_ping(app: &App, repo: &impl SettingsRepository) {
         if let Ok(base_url) = std::env::var("WINPASTE_ANNOUNCEMENT_PING_URL") {
             let base_url = base_url.trim().to_string();
             if !base_url.is_empty() {
-                std::thread::spawn(move || {
+                std::thread::Builder::new()
+                    .name("announce-ping".to_string())
+                    .stack_size(1_048_576)
+                    .spawn(move || {
                     let sep = if base_url.contains('?') { "&" } else { "?" };
                     let ping_url = format!(
                         "{}{}v={}&id={}",
@@ -673,7 +686,7 @@ fn init_announcement_ping(app: &App, repo: &impl SettingsRepository) {
                         urlencoding::encode(&anon_id)
                     );
                     let _ = reqwest::blocking::get(ping_url);
-                });
+                }).expect("spawn announce-ping thread");
             }
         }
     }
@@ -730,7 +743,10 @@ fn apply_initial_theme(app: &App) {
 
 #[cfg(target_os = "windows")]
 fn init_win32_hooks(_app: &App) {
-    std::thread::spawn(move || {
+    std::thread::Builder::new()
+        .name("win32-hooks".to_string())
+        .stack_size(2_097_152)
+        .spawn(move || {
         use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, DispatchMessageW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, SetWindowsHookExW, UnhookWindowsHookEx};
         unsafe {
             HOOK_THREAD_ID.store(windows::Win32::System::Threading::GetCurrentThreadId(), Ordering::Relaxed);
@@ -751,7 +767,7 @@ fn init_win32_hooks(_app: &App) {
                 let _ = UnhookWindowsHookEx(windows::Win32::UI::WindowsAndMessaging::HHOOK(h_mouse as _));
             }
         }
-    });
+    }).expect("spawn win32-hooks thread");
 }
 
 #[cfg(target_os = "windows")]
@@ -909,7 +925,10 @@ fn persist_window_size(window: &tauri::Window, width: u32, height: u32) {
     }
 
     let app_handle = window.app_handle().clone();
-    std::thread::spawn(move || {
+    std::thread::Builder::new()
+        .name("window-size-save".to_string())
+        .stack_size(1_048_576)
+        .spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(250));
             let last_event = LAST_WINDOW_SIZE_EVENT_MS.load(Ordering::Relaxed);
@@ -938,7 +957,7 @@ fn persist_window_size(window: &tauri::Window, width: u32, height: u32) {
             WINDOW_SIZE_SAVE_PENDING.store(false, Ordering::SeqCst);
             break;
         }
-    });
+    }).expect("spawn window-size-save thread");
 }
 
 fn handle_blur(window: &tauri::Window) {
@@ -959,20 +978,23 @@ fn handle_blur(window: &tauri::Window) {
     }
 
     let w = window.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let down = IS_MOUSE_BUTTON_DOWN.load(Ordering::SeqCst) || unsafe {
-            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 ||
-            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x02) as u16 & 0x8000) != 0
-        };
-        if !down && matches!(w.is_focused(), Ok(false)) {
-            if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
-                let _ = w.hide();
-                let _ = w.app_handle().emit("window-hidden", ());
-                NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
-                release_win_keys();
-                let _ = restore_last_focus(w.app_handle().clone());
+    std::thread::Builder::new()
+        .name("handle-blur".to_string())
+        .stack_size(1_048_576)
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let down = IS_MOUSE_BUTTON_DOWN.load(Ordering::SeqCst) || unsafe {
+                (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 ||
+                (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x02) as u16 & 0x8000) != 0
+            };
+            if !down && matches!(w.is_focused(), Ok(false)) {
+                if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
+                    let _ = w.hide();
+                    let _ = w.app_handle().emit("window-hidden", ());
+                    NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
+                    release_win_keys();
+                    let _ = restore_last_focus(w.app_handle().clone());
+                }
             }
-        }
-    });
+        }).expect("spawn handle-blur thread");
 }

@@ -521,13 +521,11 @@ fn copy_image_bytes_to_clipboard(
     // Check if it's a GIF by magic number
     let is_gif = bytes.len() > 3 && &bytes[0..3] == b"GIF";
 
-    let (width, height, raw_bytes) = {
-        let img = image::load_from_memory(&bytes)
-            .map_err(|e| AppError::Internal(format!("加载图像失败: {}", e)))?
-            .to_rgba8();
-        let (w, h) = img.dimensions();
-        (w, h, img.into_raw())
-    };
+    // Decode image once — reuse for both hash and PNG encoding
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| AppError::Internal(format!("加载图像失败: {}", e)))?;
+    let (width, height) = (img.width() as u32, img.height() as u32);
+    let raw_bytes = img.to_rgba8().into_raw();
 
     crate::LAST_APP_SET_TIMESTAMP.store(current_time, Ordering::SeqCst);
 
@@ -553,12 +551,12 @@ fn copy_image_bytes_to_clipboard(
         (byte_hash, 0)
     };
 
-    // Prepare PNG data for better compatibility
+    // Encode PNG from already-decoded image (no re-decode)
     let mut png_buf: Vec<u8> = Vec::new();
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| AppError::Internal(format!("加载图像失败: {}", e)))?;
     img.write_to(&mut std::io::Cursor::new(&mut png_buf), image::ImageFormat::Png)
         .map_err(|e| AppError::Internal(format!("编码 PNG 失败: {}", e)))?;
+    // Drop decoded image to free memory early
+    drop(img);
 
     let gif_temp_path = unsafe {
         crate::infrastructure::windows_api::win_clipboard::set_clipboard_image_with_formats(

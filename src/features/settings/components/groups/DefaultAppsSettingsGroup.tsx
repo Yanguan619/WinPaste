@@ -43,32 +43,31 @@ const DefaultAppsSettingsGroup = ({
             {!collapsed && (
                 <div className="group-content">
                     {APP_TYPES.map((type, idx, arr) => (
-                        <div key={type} className={`setting-item column ${idx === arr.length - 1 ? 'no-border' : ''}`}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                <span className="item-label" style={{ textTransform: 'uppercase', fontSize: '11px', opacity: 0.8 }}>{getTypeName(type)}</span>
-                                <button
-                                    className="btn-icon"
-                                    onClick={() => setShowAppSelector(type)}
-                                    title={t('change_app')}
-                                    style={{ width: 'auto', padding: '4px 12px', fontSize: '10px', textTransform: 'uppercase', height: '24px' }}
-                                >
-                                    {t('change_app')}
-                                </button>
-                            </div>
-
-                            <div onClick={() => setShowAppSelector(type)} className="data-panel" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div
+                            key={type}
+                            className={`setting-item ${idx === arr.length - 1 ? 'no-border' : ''}`}
+                            onClick={() => setShowAppSelector(type)}
+                            style={{ cursor: 'pointer' }}
+                        >
+                            <span className="item-label" style={{ flexShrink: 0, paddingRight: '8px' }}>{getTypeName(type)}</span>
+                            <span style={{ flex: 1, fontSize: '12px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
                                 {appSettings[`app.${type}`]
                                     ? (() => {
                                         const path = appSettings[`app.${type}`];
-                                        // Try to find friendly name from installed apps list
                                         const found = installedApps.find(app => app.value === path);
                                         if (found) return found.label;
-                                        // Fallback: extract filename without .exe
                                         const filename = path.split(/[/\\]/).pop() || path;
                                         return filename.replace(/\.exe$/i, '');
                                     })()
                                     : (defaultApps[type] ? `${t('system_default')} (${defaultApps[type].replace(/\.exe$/i, '')})` : t('not_configured'))}
-                            </div>
+                            </span>
+                            <button
+                                className="btn-icon"
+                                title={t('change_app')}
+                                style={{ width: 'auto', padding: '4px 12px', fontSize: '10px', textTransform: 'uppercase', height: '24px', flexShrink: 0 }}
+                            >
+                                {t('change_app')}
+                            </button>
                         </div>
                     ))}
                 </div>

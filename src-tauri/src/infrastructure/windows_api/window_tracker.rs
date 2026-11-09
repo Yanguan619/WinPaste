@@ -50,7 +50,7 @@ fn resolve_app_info_from_hwnd(hwnd: HWND) -> Option<ActiveAppInfo> {
                 let path_str = String::from_utf16_lossy(&path_buf[..path_len as usize]);
                 ActiveAppInfo {
                     app_name: Path::new(&path_str)
-                        .file_name()
+                        .file_stem()
                         .and_then(|n| n.to_str())
                         .unwrap_or("Unknown")
                         .to_string(),
@@ -118,25 +118,25 @@ pub fn get_clipboard_source_app_info() -> ActiveAppInfo {
 
 pub fn start_window_tracking(_app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
-        unsafe {
-            // Register hook to monitor window foreground changes
-            let _hook = SetWinEventHook(
-                EVENT_SYSTEM_FOREGROUND,
-                EVENT_SYSTEM_FOREGROUND,
-                None,
-                Some(event_hook_callback),
-                0,
-                0,
-                WINEVENT_OUTOFCONTEXT,
-            );
+            unsafe {
+                // Register hook to monitor window foreground changes
+                let _hook = SetWinEventHook(
+                    EVENT_SYSTEM_FOREGROUND,
+                    EVENT_SYSTEM_FOREGROUND,
+                    None,
+                    Some(event_hook_callback),
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT,
+                );
 
-            // Keep the thread alive and processing messages
-            let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-            while windows::Win32::UI::WindowsAndMessaging::GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                let _ = windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
-                windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                // Keep the thread alive and processing messages
+                let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
+                while windows::Win32::UI::WindowsAndMessaging::GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                    windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+                }
             }
-        }
     });
 }
 

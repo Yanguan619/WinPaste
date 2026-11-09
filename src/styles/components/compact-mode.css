@@ -1,5 +1,4 @@
 /* Compact Mode Styles - Final Cleanup */
-
 /*
  * Compact mode items share the same card design language as non-compact mode:
  * same border/border-radius/background variables — just tighter padding & spacing.
@@ -16,7 +15,7 @@
     overflow: visible !important;
     z-index: 1;
     /* Denser card: same variables as non-compact, smaller gap, lighter shadow */
-    margin-bottom: 3px !important;
+    /* margin-bottom: 3px !important; */
     border: var(--card-border) !important;
     border-radius: 4px !important;
     box-shadow: none !important;
@@ -44,9 +43,9 @@
     padding: 0 !important;
 }
 
-.history-item.compact .item-header .item-app-info > svg,
-.history-item.compact .item-header .item-app-info > img,
-.history-item.compact .item-header .item-app-info > span {
+.history-item.compact .item-header .item-app-info>svg,
+.history-item.compact .item-header .item-app-info>img,
+.history-item.compact .item-header .item-app-info>span {
     display: none !important;
 }
 
@@ -55,7 +54,6 @@
 }
 
 /* Pinned Indicator - just the corner triangle is enough */
-
 /* Image Preview — thumbnail scale, uniform height */
 .history-item.compact .image-preview {
     max-height: 34px !important;
@@ -98,8 +96,6 @@
     border-color: #444;
     color: #ededed;
 }
-
-
 
 @keyframes fadeIn {
     from {
@@ -193,21 +189,20 @@
     visibility: hidden;
     transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
     pointer-events: auto;
-    
     /* WebView2 transparent window backdrop-filter fallback */
     background: rgba(45, 45, 45, 0.95) !important;
     backdrop-filter: blur(20px) saturate(180%) !important;
     -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
     padding: 4px 6px !important;
     border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.2) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
     border: 1px solid rgba(255, 255, 255, 0.15) !important;
     z-index: 100;
 }
 
 body:not(.dark-mode) .history-item.compact .item-actions {
     background: rgba(255, 255, 255, 0.95) !important;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.1) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
     border: 1px solid rgba(0, 0, 0, 0.1) !important;
 }
 
@@ -305,7 +300,6 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
 }
 
 /* Timestamp already hidden via .item-header rules above */
-
 /* Popover Content Styling */
 .popover-meta .meta-row {
     display: flex;
@@ -340,7 +334,6 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
 }
 
 /* Hide divider in modern theme as requested */
-
 .compact-popover-portal:not(.retro) .popover-divider {
     display: none;
 }

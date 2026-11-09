@@ -9,14 +9,14 @@ WinPaste 是一个 Windows 剪贴板增强工具，基于 **Tauri v2**（Rust �
 ## 构建与运行
 
 ```bash
-npm run tauri:dev      # 开发模式，热重载 (Vite 端口 1422)
-npm run tauri:build    # 生产构建 (NSIS 安装包)
-npm run build:portable # 便携版构建 (zip + exe)
-npm run test:e2e       # 运行 Playwright e2e 测试
+bun run tauri:dev      # 开发模式，热重载 (Vite 端口 1422)
+bun run tauri:build    # 生产构建 (NSIS 安装包)
+bun run build:portable # 便携版构建 (zip + exe)
+bun run test:e2e       # 运行 Playwright e2e 测试
 ```
 
-仅 Rust 检查：在 `src-tauri/` 目录下运行 `cargo check` / `cargo test`。
-仅 TypeScript 检查：`npx tsc --noEmit`。
+仅 Rust 检查：在 `src-tauri/` 目录下运行 `cargo check` / `cargo test`。`cargo check` 需要确保无错误警告信息。
+仅 TypeScript 检查：`bun run tsc --noEmit`。
 
 ## 架构
 
@@ -84,6 +84,6 @@ SQLite 数据库位于 `{app_data_dir}/clipboard.db`，WAL 模式。表结构定
 
 - **仅限 Windows**：大量使用 `windows-rs` crate 和 Win32 API（`WH_KEYBOARD_LL`、`WS_EX_NOACTIVATE`、UIAutomation 等）。非 Windows 平台仅有编译桩代码。
 - 应用数据目录可通过 `datapath.txt` 或 exe 同级 `data/` 目录重定向（便携模式）。
-- `portable` Cargo feature 启用便携模式。`npm run build:portable` 使用 `--features portable`。
+- `portable` Cargo feature 启用便携模式。`bun run build:portable` 使用 `--features portable`。
 - Release 构建使用 `lto = true`、`codegen-units = 1`、`opt-level = "s"`、`strip = true`、`panic = "abort"` 以最小化二进制体积。
 - 未配置 pre-commit hooks — 提交信息遵循格式：`type: description`（feat, fix, adjust 等）。

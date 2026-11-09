@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 pub mod app;
 pub mod database;
 pub mod domain;
@@ -16,6 +20,9 @@ use crate::global_state::*;
 use crate::app::setup;
 
 fn main() {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let _ = dotenvy::dotenv();
 
     let app = tauri::Builder::default()
@@ -46,11 +53,11 @@ fn main() {
             app::window_manager::set_navigation_mode,
             app::window_manager::set_search_focused,
             app::hooks::set_recording_mode,
-            
+
             services::content_handler::open_content,
             services::clipboard_ops::copy_to_clipboard,
             services::clipboard_ops::paste_latest_rich,
-            
+
             app::commands::get_clipboard_history,
             app::commands::search_clipboard_history,
             app::commands::delete_clipboard_entry,
@@ -63,7 +70,7 @@ fn main() {
             app::commands::update_pinned_order,
             app::commands::get_db_count,
             app::commands::get_clipboard_content,
-            
+
             app::commands::set_sequential_mode,
             app::commands::set_sequential_hotkey,
             app::commands::set_rich_paste_hotkey,
@@ -122,11 +129,11 @@ fn main() {
 
             app::commands::get_file_size,
             app::commands::save_file_copy,
-            
+
             services::paste_queue::get_paste_queue,
             services::paste_queue::set_paste_queue,
             services::paste_queue::paste_next_step,
-            
+
             app::commands::get_tag_colors,
             app::commands::set_tag_color,
 
@@ -141,11 +148,28 @@ fn main() {
             app::commands::paste_sticky_content,
             app::commands::clear_all_stickies,
 
+            infrastructure::windows_api::apps::app_search_enabled,
+            infrastructure::windows_api::apps::refresh_app_search_status,
+            #[cfg(feature = "app-search")]
+            infrastructure::windows_api::apps::launch_app,
+            #[cfg(feature = "app-search")]
             infrastructure::windows_api::apps::get_system_default_app,
+            #[cfg(feature = "app-search")]
             infrastructure::windows_api::apps::get_executable_icon,
+            #[cfg(feature = "app-search")]
             infrastructure::windows_api::apps::get_file_icon,
+            #[cfg(feature = "app-search")]
             infrastructure::windows_api::apps::scan_installed_apps,
-            infrastructure::windows_api::apps::get_associated_apps
+            #[cfg(feature = "app-search")]
+            infrastructure::windows_api::apps::search_apps,
+            #[cfg(feature = "app-search")]
+            infrastructure::windows_api::apps::get_associated_apps,
+            #[cfg(feature = "app-search")]
+            infrastructure::windows_api::apps::open_url,
+            #[cfg(feature = "app-search")]
+            infrastructure::windows_api::apps::search_files,
+            #[cfg(feature = "app-search")]
+            infrastructure::windows_api::apps::open_file
         ])
         .on_window_event(|window, event| {
             setup::handle_window_event(window, event);

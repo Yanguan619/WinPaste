@@ -18,10 +18,12 @@ const DataSettingsGroup = ({ t, collapsed, onToggle, dataPath, clearHistory }: D
         </div>
         {!collapsed && (
             <div className="group-content">
-                <div className="setting-item column no-border">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <span className="item-label" style={{ textTransform: 'uppercase', fontSize: '11px', opacity: 0.8 }}>{t('data_path')}</span>
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                <div className="setting-item">
+                    <div className="item-label-group">
+                        <span className="item-label">{t('data_path')}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={dataPath}>{dataPath}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                             <button
                                 className="btn-icon"
                                 onClick={() => {
@@ -79,10 +81,6 @@ const DataSettingsGroup = ({ t, collapsed, onToggle, dataPath, clearHistory }: D
                             </button>
                         </div>
                     </div>
-                    <div className="data-panel" style={{ fontSize: '11px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
-                        {dataPath}
-                    </div>
-                </div>
                 <div className="setting-item">
                     <span className="item-label">{t('clear_history')}</span>
                     <button

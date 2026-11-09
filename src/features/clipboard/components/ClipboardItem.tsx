@@ -286,10 +286,12 @@ const ensureCompactPreviewResizeListener = async (): Promise<void> => {
 const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
     if (compactPreviewLifecycleListenersReady) { await compactPreviewLifecycleListenersReady; return; }
     compactPreviewLifecycleListenersReady = (async () => {
-        const lifecycleEvents = ["tauri://hide", "tauri://close-requested", "tauri://destroyed", "window-hidden"];
+        // 不监听 tauri://hide 和 window-hidden，这样剪贴板窗口隐藏时贴图窗口不会跟着关闭
+        const lifecycleEvents = ["tauri://close-requested", "tauri://destroyed"];
         await Promise.all(lifecycleEvents.map(async (eventName) => {
             try { await listen(eventName, () => { void hideCompactPreviewGlobal(); }); } catch (err) {}
         }));
+        try { await listen("compact-preview-close", () => { void hideCompactPreviewGlobal(); }); } catch (err) {}
     })();
     await compactPreviewLifecycleListenersReady;
 };
@@ -302,7 +304,6 @@ const tryReuseExistingCompactPreviewWindow = async (): Promise<WebviewWindow | n
         compactPreviewWindow = existing;
         compactPreviewMounted = true;
         compactPreviewMountedPromise = Promise.resolve(true);
-        try { await existing.setIgnoreCursorEvents(true); } catch {}
         try { await existing.setAlwaysOnTop(true); } catch {}
         return existing;
     } catch (err) { return null; }
@@ -331,7 +332,6 @@ const ensureCompactPreviewWindow = async (): Promise<WebviewWindow | null> => {
             });
             if (!created) { const reusedAfterFailedCreate = await tryReuseExistingCompactPreviewWindow(); if (reusedAfterFailedCreate) return reusedAfterFailedCreate; return null; }
             try { await previewWindow.setSize(new PhysicalSize(1, 1)); } catch {}
-            try { await previewWindow.setIgnoreCursorEvents(true); } catch {}
             compactPreviewWindow = previewWindow;
             return previewWindow;
         } catch (err) { return null; } finally { compactPreviewCreating = false; compactPreviewReady = null; }
@@ -414,7 +414,7 @@ const ClipboardItem = ({
     const richTextCleanHtml = richTextFallback?.cleanHtml || item.html_content || "";
     const richTextSnapshotDisplayMaxHeight = compactMode ? 40 : 64;
     const richTextSnapshotRenderMaxHeight = compactMode ? 100 : 200;
-    const canShowCompactPreview = compactMode && item.content_type !== "file";
+    const canShowCompactPreview = item.content_type !== "file";
     
     const richTextSnapshotSrc = useMemo(() => {
         if (!richTextSnapshotPreview || item.content_type !== "rich_text" || !item.html_content || !richTextCleanHtml) return null;
@@ -477,12 +477,12 @@ const ClipboardItem = ({
         if (item.file_preview_exists === false) return <div className="file-thumbnail-card error-bg" title={t('file_deleted')}><div className="file-icon-wrapper error-icon"><FileQuestion size={24} /></div><div className="file-info-wrapper"><div className="file-name error-text">{t('file_deleted')}</div><div className="file-hint error-text">{filePaths.length > 1 ? item.content : filePaths[0].split(/[\\/]/).pop()}</div></div></div>;
         if (filePaths.length > 1) return <div className="file-thumbnail-card" title={item.content}><div className="file-icon-wrapper"><Files size={24} /></div><div className="file-info-wrapper"><div className="file-name">{filePaths.length} {t('items')}</div><div className="file-hint">{filePaths[0].split(/[\\/]/).pop()} ...</div></div></div>;
         const filePath = filePaths[0];
-        return <div className="file-thumbnail-card" title={item.content}><div className={`file-icon-wrapper ${fileIcon ? 'file-icon-wrapper-system' : ''}`}>{fileIcon ? <img src={fileIcon} alt="" className="file-icon-image" /> : getFallbackFileIcon(filePath)}</div><div className="file-info-wrapper"><div className="file-name">{filePath.split(/[\\/]/).pop()}</div><div className="file-hint">{filePath.split(/[\\/]/).slice(0, -1).join('\\')}</div></div></div>;
+        return <div className="file-thumbnail-card" title={item.content}><div className={`file-icon-wrapper ${fileIcon ? 'file-icon-wrapper-system' : ''}`}>{fileIcon ? <img src={fileIcon} alt="" className="file-icon-image" loading="lazy" /> : getFallbackFileIcon(filePath)}</div><div className="file-info-wrapper"><div className="file-name">{filePath.split(/[\\/]/).pop()}</div><div className="file-hint">{filePath.split(/[\\/]/).slice(0, -1).join('\\')}</div></div></div>;
     };
 
     return (
         <motion.div id={id} layout={!disableLayout} initial={false} animate={{ marginBottom: 0 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.1 }}
-            className={`history-item ${isSelected ? "selected" : ""} ${compactMode ? "compact" : ""} ${item.is_pinned ? "pinned" : ""} ${item.content_type === 'file' ? 'file-item' : ''}`}
+            className={`list-item history-item ${isSelected ? "selected" : ""} ${compactMode ? "compact" : ""} ${item.is_pinned ? "pinned" : ""} ${item.content_type === 'file' ? 'file-item' : ''}`}
             data-selected={isSelected}
             onMouseDown={(e) => {
                 // 阻止默认行为以防止在置顶模式下点击时原窗口失去光标焦点
@@ -501,7 +501,7 @@ const ClipboardItem = ({
                     {dragControls && <div className="drag-handle" onPointerDown={(e) => dragControls.start(e)} style={{ cursor: 'grab', opacity: 0.5, marginRight: '4px' }}><GripVertical size={12} /></div>}
                     {item.is_pinned && !dragControls && <Pin size={10} style={{ color: 'var(--accent-color)', marginRight: '-2px', flexShrink: 0 }} />}
                     {showSourceAppIcon ? renderSourceAppIcon(sourceAppIcon, item.content_type, item.source_app) : getIcon(item.content_type)}
-                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{item.source_app}</span>
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{item.source_app.replace(/\.exe$/i, '')}</span>
                 </div>
                 <div className="item-timestamp" style={{ flexShrink: 0 }}>{getConciseTime(item.timestamp, language)}</div>
             </div>
@@ -509,15 +509,15 @@ const ClipboardItem = ({
             <div className={`content-preview ${item.content_type === 'rich_text' ? 'rich-text' : ''} ${item.content_type === 'file' ? 'file-preview' : ''} ${isSensitiveHidden ? 'sensitive-blur' : ''}`}>
                 {item.content_type === "image" ? (
                     <div style={{ position: 'relative' }}>
-                        {item.is_external && item.file_preview_exists === false ? <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}><ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} /><span style={{ marginBottom: '8px' }}>{t('image_deleted')}</span><span style={{ fontSize: '10px', opacity: 0.7, maxWidth: '80%', wordBreak: 'break-all', textAlign: 'center' }}>{item.content.split(/[\\/]/).pop()}</span></div> : <img src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || convertFileSrc(item.content))} alt={t('image_preview')} className="image-preview" style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('image-load-error'); }} />}
+                        {item.is_external && item.file_preview_exists === false ? <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}><ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} /><span style={{ marginBottom: '8px' }}>{t('image_deleted')}</span><span style={{ fontSize: '10px', opacity: 0.7, maxWidth: '80%', wordBreak: 'break-all', textAlign: 'center' }}>{item.content.split(/[\\/]/).pop()}</span></div> : <img src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || convertFileSrc(item.content))} alt={t('image_preview')} className="image-preview" loading="lazy" style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('image-load-error'); }} />}
                         {isSensitiveHidden && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontWeight: 'bold', opacity: 0.5, fontSize: '10px' }}>SENSITIVE</div>}
                     </div>
                 ) : item.content_type === "video" ? (
-                    <div className="video-thumbnail-card"><div className="video-thumbnail-wrapper"><video src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || item.content)} preload="metadata" muted playsInline className="video-thumbnail-element" onLoadedMetadata={(e) => seekVideoPreviewFrame(e.currentTarget)} /><div className="video-play-overlay"><Video size={16} /></div></div><div className="video-info-wrapper"><div className="video-name">{item.content.split(/[\\/]/).pop()}</div></div></div>
+                    <div className="video-thumbnail-card"><div className="video-thumbnail-wrapper"><video src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || item.content)} preload="none" muted playsInline className="video-thumbnail-element" onLoadedMetadata={(e) => seekVideoPreviewFrame(e.currentTarget)} /><div className="video-play-overlay"><Video size={16} /></div></div><div className="video-info-wrapper"><div className="video-name">{item.content.split(/[\\/]/).pop()}</div></div></div>
                 ) : item.content_type === "file" ? (
                     renderFilePreview()
                 ) : item.content_type === "rich_text" && item.html_content && !isSensitiveHidden ? (
-                    richTextPreviewSrc ? <img ref={richSnapshotImgRef} src={richTextPreviewSrc} alt="rich text preview" onLoad={() => { if (useSnapshotPreviewImage && richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } }} onError={() => { if (useRichImageFallback) { setRichImageFallbackFailed(true); return; } if (richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } if (effectiveRichTextSnapshotSrc) setSnapshotFailed(true); }} style={{ width: 'auto', maxWidth: '100%', maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, display: 'block', marginRight: 'auto', pointerEvents: 'none', borderRadius: '4px', maskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)' }} /> : <HtmlContent className="rich-text-preview" htmlContent={richTextCleanHtml || item.html_content} fallbackText={item.preview} preview={true} style={{ maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, overflow: 'hidden', fontSize: 'var(--clipboard-item-font-size)', lineHeight: '1.4', position: 'relative', pointerEvents: 'none', maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)' }} />
+                    richTextPreviewSrc ? <img ref={richSnapshotImgRef} src={richTextPreviewSrc} alt="rich text preview" loading="lazy" onLoad={() => { if (useSnapshotPreviewImage && richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } }} onError={() => { if (useRichImageFallback) { setRichImageFallbackFailed(true); return; } if (richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } if (effectiveRichTextSnapshotSrc) setSnapshotFailed(true); }} style={{ width: 'auto', maxWidth: '100%', maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, display: 'block', marginRight: 'auto', pointerEvents: 'none', borderRadius: '4px', maskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)' }} /> : <HtmlContent className="rich-text-preview" htmlContent={richTextCleanHtml || item.html_content} fallbackText={item.preview} preview={true} style={{ maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, overflow: 'hidden', fontSize: 'var(--clipboard-item-font-size)', lineHeight: '1.4', position: 'relative', pointerEvents: 'none', maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)' }} />
                 ) : (
                     isSensitiveHidden ? <div style={{ minHeight: '24px', opacity: 0.6, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-mono)' }}><span style={{ letterSpacing: '1px' }}>{item.preview.substring(0, 3)}...</span><span style={{ fontSize: '10px', opacity: 0.7 }}>({item.content.length} {t('chars')})</span></div> : item.preview
                 )}

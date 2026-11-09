@@ -135,7 +135,7 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
                 let mut cmd = Command::new("powershell");
                 cmd.args(["-NoProfile", "-Command", &ps_script])
                     .creation_flags(0x08000000);
-                
+
                 match cmd.spawn() {
                     Ok(_) => return Ok(()),
                     Err(e) => {
@@ -144,7 +144,7 @@ async fn handle_url_content(app_path: &Option<String>, content: &str) -> Result<
                     }
                 }
             }
-            
+
             #[cfg(not(target_os = "windows"))]
             {
                 return launch_default_handler(content).await;
@@ -163,7 +163,7 @@ async fn launch_default_handler(content: &str) -> Result<(), AppError> {
             .creation_flags(0x08000000);
         cmd.spawn().map_err(|e| AppError::Internal(format!("启动默认浏览器失败: {}", e)))?;
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("open").arg(content).spawn().map_err(|e| AppError::Internal(format!("启动默认浏览器失败: {}", e)))?;
@@ -196,7 +196,7 @@ fn create_temp_file(
             let is_gif = content.contains("image/gif");
             let extension = if is_gif { "gif" } else { "png" };
             temp_path.push(format!("{}.{}", filename, extension));
-            
+
             let b64_data = if content.starts_with("data:image") {
                 content.split(',').nth(1).unwrap_or(content)
             } else {
@@ -268,7 +268,7 @@ async fn launch_file_with_app(
                         }
                     }
                 }
-                
+
                 #[cfg(not(target_os = "windows"))]
                 Command::new("open").arg(safe_path).spawn().map_err(|e| AppError::Internal(format!("启动 UWP 程序失败 (Fallback): {}", e)))?;
             }
@@ -328,35 +328,35 @@ fn start_file_watcher(
     id: i64,
 ) {
     std::thread::spawn(move || {
-        let mut last_mtime = std::fs::metadata(&file_path)
-            .ok()
-            .and_then(|m| m.modified().ok());
-        let start_time = std::time::Instant::now();
-
-        // Monitor for 1 hour or until file deleted
-        while start_time.elapsed().as_secs() < 3600 {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            if !file_path.exists() {
-                break;
-            }
-
-            let current_mtime = std::fs::metadata(&file_path)
+            let mut last_mtime = std::fs::metadata(&file_path)
                 .ok()
                 .and_then(|m| m.modified().ok());
+            let start_time = std::time::Instant::now();
 
-            if current_mtime != last_mtime {
-                last_mtime = current_mtime;
-                crate::info!("File changed detected: {:?}", file_path);
+            // Monitor for 1 hour or until file deleted
+            while start_time.elapsed().as_secs() < 3600 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
 
-                if let Some((new_content, preview)) =
-                    read_changed_file(&file_path, &content_type)
-                {
-                    update_database_with_changes(&app_handle, id, &new_content, &preview);
+                if !file_path.exists() {
+                    break;
+                }
+
+                let current_mtime = std::fs::metadata(&file_path)
+                    .ok()
+                    .and_then(|m| m.modified().ok());
+
+                if current_mtime != last_mtime {
+                    last_mtime = current_mtime;
+                    crate::info!("File changed detected: {:?}", file_path);
+
+                    if let Some((new_content, preview)) =
+                        read_changed_file(&file_path, &content_type)
+                    {
+                        update_database_with_changes(&app_handle, id, &new_content, &preview);
+                    }
                 }
             }
-        }
-    });
+        });
 }
 
 fn read_changed_file(

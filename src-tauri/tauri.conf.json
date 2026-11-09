@@ -4,9 +4,9 @@
   "version": "2026.7.16",
   "identifier": "com.winpaste.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1422",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist/web"
   },
   "app": {

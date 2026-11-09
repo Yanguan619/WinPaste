@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Manager, Emitter};
 use crate::domain::models::ClipboardEntry;
 use crate::app_state::{SettingsState, SessionHistory, AppDataDir, PasteQueue};
-use crate::database::DbState;
+use crate::database::{DbState, save_image_to_file};
 use crate::services::clipboard::utils::*;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -93,7 +93,17 @@ impl PipelineStage for DiscoveryStage {
                 derive_rich_text_content(text, Some(html)),
                 Some(html.clone()),
             ),
-            ClipboardData::Image { data_url } => ("image".to_string(), data_url.clone(), None),
+            ClipboardData::Image { data_url } => {
+                let mut content = data_url.clone();
+                if data_url.starts_with("data:") {
+                    if let Ok(data_dir_guard) = ctx.app_handle.state::<AppDataDir>().0.lock() {
+                        if let Some(path) = save_image_to_file(data_url, &data_dir_guard) {
+                            content = path;
+                        }
+                    }
+                }
+                ("image".to_string(), content, None)
+            }
             ClipboardData::Files(f) => {
                 let content = f.join("\n");
                 if f.len() == 1 {

@@ -76,17 +76,20 @@ pub unsafe extern "system" fn tray_subclass_proc(
     if msg != 0 && msg == taskbar_msg {
         if let Some(app_handle) = crate::GLOBAL_APP_HANDLE.get() {
             let handle = app_handle.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(1500));
-                    if let Some(settings) = handle.try_state::<crate::app_state::SettingsState>() {
-                        if settings.hide_tray_icon.load(Ordering::Relaxed) {
-                            if let Some(tray) = handle.tray_by_id("main_tray") {
-                                let _ = tray.set_visible(false);
-                                crate::info!(">>> [TRAY] Explorer restart detected, re-hiding tray icon per user setting.");
+                std::thread::Builder::new()
+                    .name("tray-explorer-restart".to_string())
+                    .stack_size(1_048_576)
+                    .spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                        if let Some(settings) = handle.try_state::<crate::app_state::SettingsState>() {
+                            if settings.hide_tray_icon.load(Ordering::Relaxed) {
+                                if let Some(tray) = handle.tray_by_id("main_tray") {
+                                    let _ = tray.set_visible(false);
+                                    crate::info!(">>> [TRAY] Explorer restart detected, re-hiding tray icon per user setting.");
+                                }
                             }
                         }
-                    }
-                });
+                    }).expect("spawn tray-explorer-restart thread");
         }
     }
     DefSubclassProc(hwnd, msg, wparam, lparam)

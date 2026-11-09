@@ -43,6 +43,8 @@ export const useHistoryFetch = ({
   }, [history.length]);
 
   const PAGE_SIZE = 200;
+  /** 前端最多保留 1000 条记录，超出部分从左侧淘汰 */
+  const MAX_FRONTEND_HISTORY = 1000;
 
   const fetchHistory = useCallback(
     async (reset = false) => {
@@ -105,7 +107,12 @@ export const useHistoryFetch = ({
               nextItems = data.filter((item) => !existingIds.has(item.id) || item.id === 0);
 
               if (nextItems.length === 0) return prev;
-              return [...prev, ...nextItems];
+              const merged = [...prev, ...nextItems];
+              // Cap frontend memory: keep only the most recent entries
+              if (merged.length > MAX_FRONTEND_HISTORY) {
+                return merged.slice(merged.length - MAX_FRONTEND_HISTORY);
+              }
+              return merged;
             });
 
             setCurrentOffset(prev => (typeof prev === 'number' ? prev : 0) + dbItemsCount);

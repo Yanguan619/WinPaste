@@ -1,16 +1,26 @@
-/* Sticky window — frameless, transparent, CSS-rounded */
+/* Sticky window — frameless, transparent, always light appearance */
 body.sticky-window {
     margin: 0 !important;
     padding: 0 !important;
     background: transparent !important;
-    overflow: hidden !important;
-    border-radius: 12px !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+
+    /* Force light color scheme regardless of theme */
+    --bg-window: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: #5d5d5d;
+    --line-soft: rgba(0, 0, 0, 0.10);
+    --bg-button: rgba(0, 0, 0, 0.06);
+    --bg-button-hover: rgba(0, 0, 0, 0.12);
+    --accent-color: #0067c0;
+    --accent-color-rgb: 0, 103, 192;
 }
 
 body.sticky-window #root {
     background: transparent !important;
-    overflow: hidden !important;
-    border-radius: 12px !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
     display: flex !important;
     width: 100vw !important;
     height: 100vh !important;
@@ -26,7 +36,7 @@ body.sticky-window #root {
     display: none;
 }
 
-/* Toolbar button hover */
-.sticky-toolbar-btn:hover {
-    background: var(--bg-button-hover, rgba(128,128,128,0.15)) !important;
+/* Context menu item hover — Windows 11 style */
+.sticky-context-menu-item:hover {
+    background: rgba(0, 0, 0, 0.04) !important;
 }

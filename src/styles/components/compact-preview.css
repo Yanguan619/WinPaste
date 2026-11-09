@@ -1,23 +1,28 @@
+/* ============================================================
+   Compact Preview Window — Fluent Design Refined
+   Smooth, polished hover preview that feels native.
+   ============================================================ */
+
 body.compact-preview {
     margin: 0;
-    background: transparent;
+    padding: 0;
+    background: #ffffff;
     overflow: hidden;
 }
 
-/* Compact preview uses its own floating card.
-   Reset the global app shell (#root) to avoid an extra outer layer. */
+/* Reset the global app shell so the preview card fills the window */
 body.compact-preview #root {
-    width: auto !important;
-    height: auto !important;
-    display: inline-flex !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    display: flex !important;
     flex-direction: column;
-    background: transparent !important;
+    background: #ffffff !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     border: none !important;
     box-shadow: none !important;
     border-radius: 0 !important;
-    overflow: visible !important;
+    overflow: hidden !important;
 }
 
 body.compact-preview #root::before {
@@ -26,11 +31,24 @@ body.compact-preview #root::before {
     background: none !important;
 }
 
-body.compact-preview #root>* {
+body.compact-preview #root > * {
     position: static !important;
     z-index: auto !important;
 }
 
+/* ---- Entrance Animation ---- */
+@keyframes preview-enter {
+    0% {
+        opacity: 0;
+        transform: scale(0.95) translateY(-6px);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Root wrapper */
 .compact-preview-root {
     width: auto;
     height: auto;
@@ -41,10 +59,16 @@ body.compact-preview #root>* {
     align-self: flex-start;
 }
 
+/* Class toggled by JS on each payload update to replay the entrance animation */
+.compact-preview-root.preview-entering .compact-popover-portal.compact-preview-window {
+    animation: preview-enter 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* ---- Card Shell (speech bubble style) ---- */
 .compact-preview-root .compact-popover-portal.compact-preview-window {
     position: relative;
-    width: fit-content;
-    height: fit-content;
+    width: 100%;
+    height: 100%;
     min-width: var(--preview-min-width, 320px);
     max-width: var(--preview-max-width, 560px);
     max-height: var(--preview-max-height, 560px);
@@ -53,23 +77,57 @@ body.compact-preview #root>* {
     pointer-events: auto;
     box-sizing: border-box;
     margin: 0 !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
-    filter: none !important;
-    background: #252526 !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    border-radius: 8px !important;
-    color: #e0e0e0;
-}
 
-body.light-mode .compact-preview-root .compact-popover-portal.compact-preview-window,
-.compact-preview-root .compact-popover-portal.compact-preview-window.light-mode {
+    /* Clean white bubble — no gradient, no glass */
     background: #ffffff !important;
-    border: 1px solid rgba(0, 0, 0, 0.15) !important;
-    color: #333333;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    border-radius: 12px !important;
+
+    /* Room at the bottom for the arrow pointer */
+    padding-bottom: 14px !important;
+
+    /* Soft floating shadow — the arrow sits inside, so box-shadow covers it */
+    box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.06),
+        0 12px 32px rgba(0, 0, 0, 0.08),
+        0 24px 60px rgba(0, 0, 0, 0.04) !important;
+
+    color: #1b1b1b;
+
 }
 
-/* Keep compact preview visually single-layer. */
+/* ---- Arrow pointer (downward-pointing triangle) ---- */
+
+/* Border edge (1px larger than fill, sits 1px lower) */
+.compact-preview-root .compact-popover-portal.compact-preview-window::before {
+    content: '';
+    position: absolute;
+    bottom: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 16px;
+    height: 8px;
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+    background: rgba(0, 0, 0, 0.08);
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Fill (sits 1px above the border edge, 1px narrower on each side) */
+.compact-preview-root .compact-popover-portal.compact-preview-window::after {
+    content: '';
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 14px;
+    height: 7px;
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+    background: #ffffff;
+    pointer-events: none;
+    z-index: 2;
+}
+/* Inner layers inherit the card's solid white background */
 .compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta,
 .compact-preview-root .compact-popover-portal.compact-preview-window .popover-content,
 .compact-preview-root .compact-popover-portal.compact-preview-window .popover-divider {
@@ -78,7 +136,101 @@ body.light-mode .compact-preview-root .compact-popover-portal.compact-preview-wi
     border-radius: 0 !important;
 }
 
+/* ---- Meta Bar (type, source app, timestamp) ---- */
+.compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta {
+    padding: 10px 14px 6px 14px;
+    font-size: 11px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    letter-spacing: 0.01em;
+    line-height: 1;
+}
 
+.popover-meta .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1;
+}
+
+.popover-meta .meta-dot {
+    opacity: 0.25;
+    font-size: 8px;
+}
+
+.popover-meta .meta-row svg {
+    width: 12px !important;
+    height: 12px !important;
+    opacity: 0.5;
+}
+
+.popover-meta .meta-row span {
+    color: #333;
+    white-space: nowrap;
+}
+
+/* ---- Divider (faded gradient line) ---- */
+.compact-preview-root .compact-popover-portal.compact-preview-window .popover-divider {
+    display: block !important;
+    height: 1px;
+    background: linear-gradient(
+        to right,
+        transparent 0%,
+        rgba(0, 0, 0, 0.06) 15%,
+        rgba(0, 0, 0, 0.10) 50%,
+        rgba(0, 0, 0, 0.06) 85%,
+        transparent 100%
+    );
+    margin: 2px 14px 0 14px;
+    border: none;
+    opacity: 1;
+    flex-shrink: 0;
+}
+
+/* ---- Content Area ---- */
+.compact-preview-root .popover-content {
+    padding: 8px 14px 12px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #333;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    width: 100%;
+    max-width: 100%;
+    max-height: 420px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+body.light-mode .compact-preview-root .popover-content {
+    color: var(--text-primary, #333);
+    scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+}
+
+/* Content scrollbar */
+.compact-preview-root .popover-content::-webkit-scrollbar {
+    width: 4px;
+}
+
+.compact-preview-root .popover-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.compact-preview-root .popover-content::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+}
+
+.compact-preview-root .popover-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+/* ---- Media Content (image, video, rich image fallback) ---- */
 .compact-preview-root .compact-popover-portal.compact-preview-media {
     min-width: 260px;
     max-width: var(--preview-media-max-width, 520px);
@@ -86,10 +238,14 @@ body.light-mode .compact-preview-root .compact-popover-portal.compact-preview-wi
 }
 
 .compact-preview-root .compact-popover-portal.compact-preview-media .popover-content {
+    padding: 4px 4px 8px 4px;
     max-width: var(--preview-media-max-width, 520px);
     max-height: var(--preview-media-max-height, 360px);
     white-space: normal;
     overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .compact-preview-root .compact-popover-portal.compact-preview-media img,
@@ -98,29 +254,20 @@ body.light-mode .compact-preview-root .compact-popover-portal.compact-preview-wi
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+    border-radius: 6px;
 }
 
-.compact-preview-root .popover-content {
-    width: 100%;
-    max-width: 100%;
-    max-height: 460px;
-    overflow: auto;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    white-space: pre-wrap;
-}
-
-/* Rich-text preview cleanup (avoid extra blank lines at top/bottom) */
+/* ---- Rich Text Preview ---- */
 .compact-preview-root .rich-text-preview {
     margin: 0;
     padding: 0;
 }
 
-.compact-preview-root .rich-text-preview> :first-child {
+.compact-preview-root .rich-text-preview > :first-child {
     margin-top: 0 !important;
 }
 
-.compact-preview-root .rich-text-preview> :last-child {
+.compact-preview-root .rich-text-preview > :last-child {
     margin-bottom: 0 !important;
 }
 
@@ -129,4 +276,63 @@ body.light-mode .compact-preview-root .compact-popover-portal.compact-preview-wi
     margin: 0 !important;
     padding: 0 !important;
     display: none !important;
+}
+
+/* ---- Context Menu ---- */
+.compact-preview-root .preview-context-menu {
+    position: fixed;
+    z-index: 9999;
+    min-width: 160px;
+    padding: 4px 0;
+    background: #ffffff !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    border-radius: 8px !important;
+    box-shadow:
+        0 4px 16px rgba(0, 0, 0, 0.08),
+        0 8px 32px rgba(0, 0, 0, 0.04) !important;
+    overflow-y: auto;
+}
+
+.compact-preview-root .preview-context-menu-item {
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #333;
+    flex-shrink: 0;
+    transition: background 0.1s ease;
+    user-select: none;
+}
+
+.compact-preview-root .preview-context-menu-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.compact-preview-root .preview-context-menu-item-icon {
+    width: 16px;
+    height: 16px;
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+.compact-preview-root .preview-context-menu-item-label {
+    flex: 1;
+    white-space: nowrap;
+}
+
+.compact-preview-root .preview-context-menu-item.danger {
+    color: #999;
+}
+
+.compact-preview-root .preview-context-menu-item.danger:hover {
+    color: #e04040;
+}
+
+.compact-preview-root .preview-context-menu-separator {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.06);
+    margin: 4px 8px;
+    flex-shrink: 0;
 }

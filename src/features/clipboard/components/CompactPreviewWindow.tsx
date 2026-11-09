@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize, currentMonitor } from "@tauri-apps/api/window";
 import {
     FileText,
@@ -9,7 +10,10 @@ import {
     File,
     Video,
     AppWindow,
-    Clock
+    Clock,
+    Copy,
+    ExternalLink,
+    X
 } from "lucide-react";
 import HtmlContent from "../../../shared/components/HtmlContent";
 import { getConciseTime } from "../../../shared/lib/utils";
@@ -30,6 +34,13 @@ type PreviewPayload = {
     richTextSnapshotPreview?: boolean;
     clipboardItemFontSize?: number;
     clipboardTagFontSize?: number;
+};
+
+type ContextMenuState = {
+    visible: boolean;
+    x: number;
+    y: number;
+    maxHeight: number;
 };
 
 const RICH_IMAGE_FALLBACK_PREFIX = "<!--WINPASTE_RICH_IMAGE:";
@@ -128,6 +139,9 @@ const CompactPreviewWindow = () => {
     const [payload, setPayload] = useState<PreviewPayload | null>(null);
     const [snapshotFailed, setSnapshotFailed] = useState(false);
     const [richImageFallbackFailed, setRichImageFallbackFailed] = useState(false);
+    const [animating, setAnimating] = useState(false);
+    const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, maxHeight: 200 });
+    const contextMenuRef = useRef<HTMLDivElement | null>(null);
     const richSnapshotImgRef = useRef<HTMLImageElement | null>(null);
     const richSnapshotFallbackTimerRef = useRef<number | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -166,7 +180,7 @@ const CompactPreviewWindow = () => {
                 const monitor = await currentMonitor();
                 const monitorWidth = monitor?.size.width ?? 1280;
                 const monitorHeight = monitor?.size.height ?? 720;
-                const maxWidth = Math.max(320, Math.min(560, Math.floor(monitorWidth * 0.6)));
+                const maxWidth = Math.max(320, Math.floor(monitorWidth * 0.5));
                 const maxHeight = Math.max(240, Math.min(560, Math.floor(monitorHeight * 0.6)));
                 const mediaMaxWidth = Math.max(260, Math.min(520, maxWidth));
                 const mediaMaxHeight = Math.max(200, Math.min(360, maxHeight - 120));
@@ -225,12 +239,12 @@ const CompactPreviewWindow = () => {
                 const measuredWidth = Math.max(container.offsetWidth, container.scrollWidth);
                 const measuredHeight = Math.max(container.offsetHeight, container.scrollHeight);
                 const width = Math.min(Math.max(Math.ceil(measuredWidth), minWidth), maxWidth);
-                const height = Math.min(Math.max(Math.ceil(measuredHeight), 80), maxHeight);
+                const height = Math.min(Math.max(Math.ceil(measuredHeight), 140), maxHeight);
                 if (width < 40 || height < 40) return;
 
                 const last = lastSentSizeRef.current;
                 if (last && Math.abs(last.width - width) <= 1 && Math.abs(last.height - height) <= 1) return;
-                
+
                 lastSentSizeRef.current = { width, height };
                 emitTo("main", "compact-preview-resize", { width, height }).catch(console.error);
                 getCurrentWindow().setSize(new LogicalSize(width, height)).catch(console.error);
@@ -263,6 +277,14 @@ const CompactPreviewWindow = () => {
         setRichImageFallbackFailed(false);
     }, [payload?.content, payload?.htmlContent, payload?.richTextSnapshotPreview]);
 
+    // Trigger entrance animation on each new payload (window show or content change)
+    useEffect(() => {
+        if (!payload) return;
+        setAnimating(true);
+        const timer = window.setTimeout(() => setAnimating(false), 250);
+        return () => window.clearTimeout(timer);
+    }, [payload]);
+
     useEffect(() => {
         if (richSnapshotFallbackTimerRef.current) {
             window.clearTimeout(richSnapshotFallbackTimerRef.current);
@@ -291,6 +313,75 @@ const CompactPreviewWindow = () => {
             }
         };
     }, [useSnapshotPreviewImage, effectiveRichTextSnapshotSrc, payload?.content, payload?.htmlContent]);
+
+    // 右键菜单处理（限制在窗口视口范围内，窗口再小也能滚动查看）
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const menuWidth = 160;
+        const vw = document.documentElement.clientWidth;
+        const vh = document.documentElement.clientHeight;
+        const menuHeight = Math.min(130, vh - 8); // 菜单不超过视口高度 - 边距
+        const maxHeight = vh - 8; // 限制最大高度，留 8px 边距
+        const x = Math.max(0, Math.min(e.clientX, vw - menuWidth));
+        const y = Math.max(0, Math.min(e.clientY, vh - menuHeight));
+        setContextMenu({ visible: true, x, y, maxHeight });
+    };
+
+    const closeContextMenu = () => {
+        setContextMenu(prev => ({ ...prev, visible: false }));
+    };
+
+    useEffect(() => {
+        if (!contextMenu.visible) return;
+        const handleClick = (e: MouseEvent) => {
+            if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+                closeContextMenu();
+            }
+        };
+        document.addEventListener("mousedown", handleClick);
+        return () => document.removeEventListener("mousedown", handleClick);
+    }, [contextMenu.visible]);
+
+    const handleCopy = useCallback(async () => {
+        if (!payload) return;
+        closeContextMenu();
+        try {
+            await invoke("copy_to_clipboard", {
+                content: payload.content,
+                contentType: payload.contentType,
+                paste: false,
+                id: 0,
+                deleteAfterUse: false,
+            });
+        } catch (err) {
+            console.error("Copy from preview failed:", err);
+        }
+    }, [payload]);
+
+    const handleOpen = useCallback(async () => {
+        if (!payload) return;
+        closeContextMenu();
+        try {
+            await invoke("open_content", {
+                content: payload.content,
+                contentType: payload.contentType,
+                id: 0,
+            });
+        } catch (err) {
+            console.error("Open from preview failed:", err);
+        }
+    }, [payload]);
+
+    const handleClose = useCallback(async () => {
+        closeContextMenu();
+        try {
+            await getCurrentWindow().hide();
+            emitTo("main", "compact-preview-close", true).catch(console.error);
+        } catch (err) {
+            console.error("Close preview failed:", err);
+        }
+    }, []);
 
     const content = useMemo(() => {
         if (!payload) return null;
@@ -372,11 +463,12 @@ const CompactPreviewWindow = () => {
                 />
             );
         }
-        return payload.content || payload.preview || "";
+        const text = payload.content || payload.preview || "";
+        return <div style={{ whiteSpace: "pre", overflow: "hidden" }}>{text}</div>;
     }, [payload, effectiveRichImageFallbackSrc, effectiveRichTextSnapshotSrc]);
 
     return (
-        <div className="compact-preview-root">
+        <div className={`compact-preview-root${animating ? ' preview-entering' : ''}`} onContextMenu={handleContextMenu}>
             <div
                 ref={containerRef}
                 className={`compact-popover-portal compact-preview-window theme-fluent ${payload?.contentType === "image" ? "compact-preview-image" : ""} ${payload?.contentType === "image" || payload?.contentType === "video" || !!effectiveRichImageFallbackSrc ? "compact-preview-media" : ""} ${payload?.colorMode === 'light' ? 'light-mode' : 'dark-mode'}`}
@@ -405,6 +497,32 @@ const CompactPreviewWindow = () => {
                 <div ref={dividerRef} className="popover-divider" />
                 <div ref={contentRef} className="popover-content">{content}</div>
             </div>
+            {/* 右键菜单 */}
+            {contextMenu.visible && (
+                <div
+                    ref={contextMenuRef}
+                    className="preview-context-menu"
+                    style={{
+                        left: contextMenu.x,
+                        top: contextMenu.y,
+                        maxHeight: contextMenu.maxHeight,
+                    }}
+                >
+                    <div className="preview-context-menu-item" onClick={handleCopy}>
+                        <Copy size={14} className="preview-context-menu-item-icon" />
+                        <span className="preview-context-menu-item-label">复制</span>
+                    </div>
+                    <div className="preview-context-menu-item" onClick={handleOpen}>
+                        <ExternalLink size={14} className="preview-context-menu-item-icon" />
+                        <span className="preview-context-menu-item-label">打开</span>
+                    </div>
+                    <div className="preview-context-menu-separator" />
+                    <div className="preview-context-menu-item danger" onClick={handleClose}>
+                        <X size={14} className="preview-context-menu-item-icon" />
+                        <span className="preview-context-menu-item-label">关闭预览</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
