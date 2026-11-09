@@ -778,13 +778,7 @@ fn setup_tray(app: &App, hide_tray: bool, lightweight: bool) {
         .menu(&menu)
         .on_menu_event(|app, event| {
             if event.id.as_ref() == "show" {
-                // 轻量模式 = 仅记录，面板不可用；需先关闭轻量模式
-                if crate::app::window_manager::is_lightweight(app) {
-                    // no-op
-                } else if let Some(window) = crate::app::window_manager::ensure_main_window(app) {
-                    let _ = window.show();
-                    let _ = app.emit("window-shown", ());
-                }
+                crate::app::window_manager::show_window_from_external(app);
             } else if event.id.as_ref() == "lightweight" {
                 let current = app.state::<crate::app_state::SettingsState>().lightweight_mode.load(Ordering::Relaxed);
                 let next = !current;

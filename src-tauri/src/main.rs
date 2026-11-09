@@ -48,17 +48,8 @@ fn main() {
             // 已有实例运行时，第二次启动不再静默退出：
             // 唤起主窗口（与托盘"显示主界面"行为一致），
             // 修复"旧版本还在跑，双击新版图标没反应"的问题。
-            // 轻量模式 = 仅记录，二次启动不唤起面板
-            if !crate::app::window_manager::is_lightweight(app) {
-                if let Some(window) = crate::app::window_manager::ensure_main_window(app) {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.set_focus();
-                    } else {
-                        // 与 Win+V / 托盘一致：走完整显示路径（定位到光标、置顶、导航复位）
-                        crate::app::window_manager::toggle_window(app);
-                    }
-                }
-            }
+            // 轻量模式下面板是销毁状态，这里会按需重建。
+            crate::app::window_manager::show_window_from_external(app);
         }))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_http::init())

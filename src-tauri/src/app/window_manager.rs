@@ -468,10 +468,10 @@ pub fn is_lightweight(app: &AppHandle) -> bool {
 }
 
 pub fn toggle_window(app: &AppHandle) {
-    // 轻量模式 = 仅记录：面板不弹出，需到托盘关闭轻量模式后才能使用。
+    // 轻量模式下面板是"销毁"状态而不是隐藏状态：这里按需重建
+    // （rebuild_main_window 会还原尺寸/置顶/子类化），代价是唤出多几百毫秒。
     if is_lightweight(app) {
-        crate::info!(">>> [TOGGLE] skipped: lightweight mode is on");
-        return;
+        crate::info!(">>> [TOGGLE] lightweight mode: rebuilding panel on demand");
     }
     let window = match ensure_main_window(app) {
         Some(w) => w,
@@ -856,6 +856,18 @@ pub fn toggle_window(app: &AppHandle) {
             let _ = app.emit("window-shown", ());
         }
     }
+}
+
+/// External show trigger (tray menu / second launch / tray icon): focus if the panel is
+/// already visible, otherwise run the full show path (rebuilding it in lightweight mode).
+pub fn show_window_from_external(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.set_focus();
+            return;
+        }
+    }
+    toggle_window(app);
 }
 
 #[tauri::command]
