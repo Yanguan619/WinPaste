@@ -360,6 +360,11 @@ pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
 
     let window = builder.build().ok()?;
 
+    // 新 webview 启动期间不会有前端回执；不清零会让健康检查把"还没加载完"
+    // 误判成"渲染进程已死"，触发 reload 把刚建好的面板重载掉。
+    PANEL_HEALTH_ACK.store(0, Ordering::Relaxed);
+    PANEL_HEALTH_MISSES.store(0, Ordering::Relaxed);
+
     apply_noactivate_style(&window, pinned);
 
     #[cfg(windows)]
@@ -398,6 +403,10 @@ pub fn destroy_main_window(app: &AppHandle) {
         WindowExt::release_win_keys();
         let _ = window.destroy();
     }
+    // webview 已经不存在了，之前的回执 token 作废；否则下次重建窗口做健康检查时
+    // 会把"新前端还没加载完"当成漏检。
+    PANEL_HEALTH_ACK.store(0, Ordering::Relaxed);
+    PANEL_HEALTH_MISSES.store(0, Ordering::Relaxed);
     destroy_transient_windows(app);
     crate::IS_MAIN_WINDOW_FOCUSED.store(false, Ordering::Relaxed);
     NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
