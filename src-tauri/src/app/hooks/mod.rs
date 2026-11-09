@@ -489,13 +489,17 @@ pub unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_para
                 || live_key_down(0x11) || live_key_down(0xA2) || live_key_down(0xA3)
                 || live_key_down(0x12) || live_key_down(0xA4) || live_key_down(0xA5);
             if win_down && !other_down {
-                if is_down && !was_v_down {
-                    if let Some(sender) = INPUT_SENDER.get() {
-                        let _ = sender.send(InputEvent::ToggleWindow { source: "Win+V" });
+                // 走 RegisterHotKey 时不能吞键(否则系统热键收不到),让系统自己触发。
+                // 只有注册失败、退回钩子拦截时才需要吞掉,避免系统 Win 面板抢响应。
+                if !WIN_V_VIA_HOTKEY.load(Ordering::Relaxed) {
+                    if is_down && !was_v_down {
+                        if let Some(sender) = INPUT_SENDER.get() {
+                            let _ = sender.send(InputEvent::ToggleWindow { source: "Win+V" });
+                        }
                     }
+                    // down/up 与键盘自动重复全部吞掉,避免系统 Win+V(剪贴板历史)抢响应
+                    return LRESULT(1);
                 }
-                // down/up 与键盘自动重复全部吞掉,避免系统 Win+V(剪贴板历史)抢响应
-                return LRESULT(1);
             }
         }
 

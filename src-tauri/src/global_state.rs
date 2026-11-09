@@ -101,3 +101,5 @@ pub static NAVIGATION_MODE_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static IS_MAIN_WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
 pub static IS_SEARCH_FOCUSED: AtomicBool = AtomicBool::new(false);
 pub static LAST_GLOBAL_HOTKEY_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
+/// Win+V 已通过 RegisterHotKey 注册成功：此时钩子不能再吞键，否则系统热键收不到。
+pub static WIN_V_VIA_HOTKEY: AtomicBool = AtomicBool::new(false);

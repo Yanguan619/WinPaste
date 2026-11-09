@@ -22,19 +22,42 @@ pub fn register_hotkey(app_handle: AppHandle, hotkey: String) -> AppResult<()> {
     let _ = app_handle.global_shortcut().unregister_all();
 
     // 主快捷键换成/换离 Win+V 时，同步系统 Win+V 归属（否则系统剪贴板面板会跟着弹）
-    crate::app::commands::system_cmd::sync_win_v_takeover(crate::app::hooks::is_win_v_hotkey(&hotkey));
+    let win_v = crate::app::hooks::is_win_v_hotkey(&hotkey);
+    let took_over = crate::app::commands::system_cmd::sync_win_v_takeover(win_v);
+    if !win_v {
+        crate::global_state::WIN_V_VIA_HOTKEY.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
 
     if !hotkey.is_empty() {
         let normalized = normalize_shortcut_string(&hotkey);
         crate::info!(">>> [DEBUG] Normalized main hotkey: {}", normalized);
-        if hotkey.eq_ignore_ascii_case("MouseMiddle") || hotkey.eq_ignore_ascii_case("MButton") || crate::app::hooks::is_win_v_hotkey(&hotkey) {
-            // Mouse middle and Win+V handled in hooks
+        if hotkey.eq_ignore_ascii_case("MouseMiddle") || hotkey.eq_ignore_ascii_case("MButton") {
+            // Mouse middle handled in hooks
         } else {
             match normalized.parse::<Shortcut>() {
                 Ok(shortcut) => {
                     match app_handle.global_shortcut().register(shortcut) {
-                        Ok(_) => {},
+                        Ok(_) => {
+                            if win_v {
+                                crate::global_state::WIN_V_VIA_HOTKEY.store(true, std::sync::atomic::Ordering::Relaxed);
+                                crate::info!(">>> [WIN+V] registered as system hotkey (no Start menu / no system panel)");
+                            }
+                        },
                         Err(e) => {
+                            if win_v {
+                                // 系统还占着 Win+V（多半是 explorer 刚被重启还在启动），
+                                // 钩子继续兜底，稍后重试注册。
+                                crate::global_state::WIN_V_VIA_HOTKEY.store(false, std::sync::atomic::Ordering::Relaxed);
+                                if took_over {
+                                    let handle = app_handle.clone();
+                                    let retry_hotkey = hotkey.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                                        let _ = register_hotkey(handle, retry_hotkey);
+                                    });
+                                    return Ok(());
+                                }
+                            }
                             let err_str = format!("{:?}", e);
                             crate::error!(">>> [DEBUG] Failed to register main hotkey: {}", err_str);
                             return Err(AppError::Internal(format!("快捷键注册失败: {}", err_str)));

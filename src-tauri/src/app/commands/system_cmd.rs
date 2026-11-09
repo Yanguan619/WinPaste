@@ -285,18 +285,20 @@ pub fn get_windows_clipboard_history() -> AppResult<bool> {
 
 /// 让系统 Win+V 归属与当前主快捷键保持一致：用 Win+V 时禁用系统剪贴板历史与 shell 的
 /// Win+V（低层键盘钩子吞不掉 shell 的热键，实测会双面板）；换别的键时还原。
-/// 注册表只在 explorer 启动时读取，所以状态变化后重启一次 explorer。
-pub fn sync_win_v_takeover(want: bool) {
+/// 注册表只在 explorer 启动时读取，所以状态变化后重启一次 explorer。返回是否重启过。
+pub fn sync_win_v_takeover(want: bool) -> bool {
     let have = get_registry_win_v_optimized_status();
     if want == have {
-        return;
+        return false;
     }
     crate::info!(">>> [WIN+V] registry takeover: {} -> {}", have, want);
     if let Ok(changed) = trigger_registry_win_v_optimization(want) {
         if changed {
             let _ = restart_explorer();
+            return true;
         }
     }
+    false
 }
 
 #[tauri::command]
