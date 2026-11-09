@@ -296,7 +296,16 @@ pub async fn get_clipboard_history(
     }
 
     // Serve list-safe entries (thumbnails only for base64 images).
-    let history = history.into_iter().map(list_ready_entry).collect();
+    let history: Vec<ClipboardEntry> = history.into_iter().map(list_ready_entry).collect();
+
+    let age = crate::app::window_manager::last_rebuild_age_ms();
+    if age != 0 {
+        crate::info!(
+            ">>> [LIGHTWEIGHT] history ready ({} rows) +{}ms after rebuild",
+            history.len(),
+            age
+        );
+    }
 
     Ok(history)
 }
@@ -360,7 +369,7 @@ pub async fn search_clipboard_history(
     }
 
     // Serve list-safe entries (thumbnails only for base64 images).
-    let history = history.into_iter().map(list_ready_entry).collect();
+    let history: Vec<ClipboardEntry> = history.into_iter().map(list_ready_entry).collect();
 
     Ok(history)
 }

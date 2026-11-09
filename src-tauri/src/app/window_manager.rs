@@ -41,6 +41,19 @@ fn now_ms() -> u64 {
 }
 
 /// 主窗口前端收到 panel-health-ping 后回执;长时间无回执说明渲染进程已死。
+/// 主面板最近一次重建的时间戳，用于测量"按键 → 窗口创建 → 页面加载 → 前端就绪"各段耗时。
+static LAST_REBUILD_MS: AtomicU64 = AtomicU64::new(0);
+
+/// 距上次面板重建的毫秒数；0 表示还没重建过（正常模式常驻窗口）。
+pub fn last_rebuild_age_ms() -> u64 {
+    let t = LAST_REBUILD_MS.load(Ordering::Relaxed);
+    if t == 0 {
+        0
+    } else {
+        now_ms().saturating_sub(t)
+    }
+}
+
 #[tauri::command]
 pub fn panel_health_ack(token: u64) {
     PANEL_HEALTH_ACK.store(token, Ordering::Relaxed);
@@ -353,6 +366,15 @@ pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         .always_on_top(pinned)
         .focusable(!pinned);
 
+    let load_start = started;
+    builder = builder.on_page_load(move |_wv, payload| {
+        crate::info!(
+            ">>> [LIGHTWEIGHT] page {:?} +{}ms after rebuild started",
+            payload.event(),
+            load_start.elapsed().as_millis()
+        );
+    });
+
     // persisted_window_size returns LOGICAL pixels (see persist_window_size), and
     // inner_size() expects logical pixels — this pair must stay consistent, otherwise
     // the rebuilt panel grows by the scale factor on every lightweight-mode cycle.
@@ -360,10 +382,10 @@ pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     builder = builder.inner_size(w, h);
 
     let window = builder.build().ok()?;
+    LAST_REBUILD_MS.store(now_ms(), Ordering::Relaxed);
     crate::info!(
-        ">>> [LIGHTWEIGHT] main window rebuilt in {}ms (warm={})",
-        started.elapsed().as_millis(),
-        app.get_webview_window("warm").is_some()
+        ">>> [LIGHTWEIGHT] main window rebuilt in {}ms",
+        started.elapsed().as_millis()
     );
 
     // 新 webview 启动期间不会有前端回执；不清零会让健康检查把"还没加载完"
@@ -438,7 +460,7 @@ static LIGHTWEIGHT_RELEASE_TOKEN: AtomicU64 = AtomicU64::new(0);
 fn schedule_lightweight_release(app: AppHandle) {
     let token = LIGHTWEIGHT_RELEASE_TOKEN.fetch_add(1, Ordering::Relaxed) + 1;
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
         if LIGHTWEIGHT_RELEASE_TOKEN.load(Ordering::Relaxed) != token {
             return;
         }
