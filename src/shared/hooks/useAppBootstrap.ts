@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Dispatch, SetStateAction } from "react";
 import type { DefaultAppsMap, InstalledAppOption } from "../../features/app/types";
 
@@ -7,6 +8,7 @@ interface UseAppBootstrapOptions {
   setDataPath: Dispatch<SetStateAction<string>>;
   setInstalledApps: Dispatch<SetStateAction<InstalledAppOption[]>>;
   setAutoStart: Dispatch<SetStateAction<boolean>>;
+  setAutoStartAdmin: Dispatch<SetStateAction<boolean>>;
   setWinClipboardDisabled: Dispatch<SetStateAction<boolean>>;
   setDefaultApps: Dispatch<SetStateAction<DefaultAppsMap>>;
   setAppSearchEnabled: Dispatch<SetStateAction<boolean>>;
@@ -16,6 +18,7 @@ export const useAppBootstrap = ({
   setDataPath,
   setInstalledApps,
   setAutoStart,
+  setAutoStartAdmin,
   setWinClipboardDisabled,
   setAppSearchEnabled
 }: UseAppBootstrapOptions) => {
@@ -42,6 +45,16 @@ export const useAppBootstrap = ({
   useEffect(() => {
     let disposed = false;
 
+    // 后端在面板显示后会 ping 一次;渲染进程已死时不会回执,
+    // 连续两次缺失即触发 webview 重载自愈(见 window_manager.rs)。
+    let unlistenHealth: (() => void) | null = null;
+    listen<number>("panel-health-ping", (event) => {
+      invoke("panel_health_ack", { token: event.payload }).catch(() => {});
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenHealth = unlisten;
+    }).catch(() => {});
+
     invoke<string>("get_data_path").then((path) => {
       if (!disposed) setDataPath(path);
     }).catch(console.error);
@@ -53,16 +66,22 @@ export const useAppBootstrap = ({
       if (!disposed) setAutoStart(enabled);
     }).catch(console.error);
 
+    invoke<boolean>("is_autostart_admin_enabled").then((enabled) => {
+      if (!disposed) setAutoStartAdmin(enabled);
+    }).catch(console.error);
+
     invoke<boolean>("get_windows_clipboard_history").then((enabled) => {
       if (!disposed) setWinClipboardDisabled(!enabled);
     }).catch(console.error);
 
     return () => {
       disposed = true;
+      unlistenHealth?.();
     };
   }, [
     setDataPath,
     setAutoStart,
+    setAutoStartAdmin,
     setWinClipboardDisabled,
     refreshAppSearchStatus
   ]);

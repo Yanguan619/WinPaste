@@ -16,6 +16,7 @@ export interface ClipboardItemProps {
   onTagAdd: () => void;
   onTagDelete: (tag: string) => void;
   onStickyCreate?: (e: MouseEvent) => void;
+  onExternalMissing?: (id: number) => void;
   dragControls?: DragControls;
   id?: string;
   disableLayout?: boolean;
@@ -33,15 +34,13 @@ export interface VirtualClipboardListProps<T = ClipboardEntry> {
   onLoadMore?: () => void;
   hasMore: boolean;
   isLoading: boolean;
-  selectedIndex: number;
-  isKeyboardMode: boolean;
   onScroll?: (offset: number) => void;
   compactMode: boolean;
   header?: ReactNode;
 }
 
 export interface VirtualClipboardListHandle {
-  scrollToItem: (index: number) => void;
+  scrollToItem: (index: number, align?: 'start' | 'center' | 'end') => void;
   scrollToTop: () => void;
   resetAfterIndex: (index: number) => void;
 }

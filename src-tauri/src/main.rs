@@ -18,6 +18,7 @@ pub mod migration;
 use std::sync::atomic::{Ordering};
 use crate::global_state::*;
 use crate::app::setup;
+use tauri::Emitter;
 
 fn main() {
     #[cfg(feature = "dhat-heap")]
@@ -36,8 +37,25 @@ fn main() {
                 setup::handle_global_shortcut(app, shortcut);
             }
         }).build())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        .plugin(tauri_plugin_window_state::Builder::default()
+            .with_filter(|label| label != "main")
+            .build())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 已有实例运行时，第二次启动不再静默退出：
+            // 唤起主窗口（与托盘"显示主界面"行为一致），
+            // 修复"旧版本还在跑，双击新版图标没反应"的问题。
+            // 轻量模式 = 仅记录，二次启动不唤起面板
+            if !crate::app::window_manager::is_lightweight(app) {
+                if let Some(window) = crate::app::window_manager::ensure_main_window(app) {
+                    let was_visible = window.is_visible().unwrap_or(false);
+                    let _ = window.show();
+                    if !was_visible {
+                        let _ = app.emit("window-shown", ());
+                    }
+                    let _ = window.set_focus();
+                }
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
@@ -52,6 +70,9 @@ fn main() {
             app::window_manager::set_navigation_enabled,
             app::window_manager::set_navigation_mode,
             app::window_manager::set_search_focused,
+            app::window_manager::panel_health_ack,
+            app::commands::raise_window_topmost,
+            app::commands::frontend_log,
             app::hooks::set_recording_mode,
 
             services::content_handler::open_content,
@@ -62,6 +83,7 @@ fn main() {
             app::commands::search_clipboard_history,
             app::commands::delete_clipboard_entry,
             app::commands::clear_clipboard_history,
+            app::commands::clear_invalid_file_entries,
             app::commands::get_tag_items,
             app::commands::get_all_tags_info,
             app::commands::rename_tag_globally,
@@ -70,6 +92,7 @@ fn main() {
             app::commands::update_pinned_order,
             app::commands::get_db_count,
             app::commands::get_clipboard_content,
+            app::commands::get_hover_preview_image,
 
             app::commands::set_sequential_mode,
             app::commands::set_sequential_hotkey,
@@ -92,6 +115,7 @@ fn main() {
             app::commands::set_sound_enabled,
             app::commands::set_arrow_key_selection,
             app::commands::set_tray_visible,
+            app::window_manager::set_lightweight_mode,
             app::commands::set_edge_docking,
             app::commands::set_follow_mouse,
             app::commands::set_follow_caret,
@@ -104,6 +128,9 @@ fn main() {
             app::commands::set_data_path,
             app::commands::toggle_autostart,
             app::commands::is_autostart_enabled,
+            app::commands::set_autostart_admin,
+            app::commands::is_autostart_admin_enabled,
+            app::commands::get_installer_language,
             app::commands::set_windows_clipboard_history,
             app::commands::get_windows_clipboard_history,
             app::commands::set_win_clipboard_disabled,
@@ -129,6 +156,7 @@ fn main() {
 
             app::commands::get_file_size,
             app::commands::save_file_copy,
+            app::commands::check_external_file_exists,
 
             services::paste_queue::get_paste_queue,
             services::paste_queue::set_paste_queue,
@@ -143,10 +171,10 @@ fn main() {
             app::commands::delete_sticky,
             app::commands::update_sticky_position,
             app::commands::update_sticky_size,
+            app::commands::update_sticky_content,
             app::commands::update_sticky_always_on_top,
             app::commands::close_sticky_window,
             app::commands::paste_sticky_content,
-            app::commands::clear_all_stickies,
 
             infrastructure::windows_api::apps::app_search_enabled,
             infrastructure::windows_api::apps::refresh_app_search_status,
@@ -179,7 +207,16 @@ fn main() {
     match app {
         Ok(app) => {
             info!(">>> [STARTUP] Tauri app built successfully.");
-            app.run(|_app_handle, _event| {});
+            app.run(|_app_handle, event| {
+                // 轻量模式 = 零窗口后台记录：当最后一个窗口被销毁（轻量模式关闭面板）时，
+                // 默认会触发 ExitRequested 导致整个应用退出。这里 intercept 掉，只有用户
+                // 通过托盘/命令显式 quit（EXIT_REQUESTED=true）时才真正退出。
+                if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                    if !EXIT_REQUESTED.load(Ordering::Relaxed) {
+                        api.prevent_exit();
+                    }
+                }
+            });
         },
         Err(e) => {
              error!(">>> [STARTUP] Failed to build tauri app: {}", e);

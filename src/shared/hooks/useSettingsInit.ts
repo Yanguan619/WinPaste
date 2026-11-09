@@ -10,7 +10,9 @@ export const useSettingsInit = () => {
     setCompactMode,
     setLanguage,
     setColorMode,
-    setStickyEnabled
+    setStickyEnabled,
+    setAppSettings,
+    setSettingsLoadError
   } = useSettingsStore();
 
   useEffect(() => {
@@ -26,7 +28,9 @@ export const useSettingsInit = () => {
     invoke<Record<string, string>>("get_settings")
       .then((res) => {
         if (disposed) return;
+        setSettingsLoadError(null);
         setSettings(res);
+        setAppSettings(res);
 
         if (res["app.hotkey"]) setHotkey(res["app.hotkey"]);
         if (res["app.compact_mode"]) {
@@ -40,19 +44,41 @@ export const useSettingsInit = () => {
         if (res["app.language"]) {
            setLanguage(res["app.language"] as Locale);
         } else {
-           const sysLang = navigator.language.toLowerCase();
-           if (sysLang.startsWith('zh')) {
-             if (sysLang.includes('tw') || sysLang.includes('hk') || sysLang.includes('mo')) {
-               setLanguage('tw');
-             } else {
-               setLanguage('zh');
-             }
-           } else {
-               setLanguage('en');
-           }
+           // 用户未在应用内设置过语言：
+           // 优先跟随安装程序的语言选择（NSIS 写入注册表），
+           // 否则回退到系统语言。
+           const applySystemLanguage = () => {
+              const sysLang = navigator.language.toLowerCase();
+              if (sysLang.startsWith('zh')) {
+                if (sysLang.includes('tw') || sysLang.includes('hk') || sysLang.includes('mo')) {
+                  setLanguage('tw');
+                } else {
+                  setLanguage('zh');
+                }
+              } else {
+                  setLanguage('en');
+              }
+           };
+           invoke<string | null>("get_installer_language")
+             .then((installerLang) => {
+                if (disposed) return;
+                if (installerLang === 'zh' || installerLang === 'tw' || installerLang === 'en') {
+                  setLanguage(installerLang);
+                } else {
+                  applySystemLanguage();
+                }
+             })
+             .catch(() => {
+                if (!disposed) applySystemLanguage();
+             });
         }
       })
-      .catch(console.error);
+      .catch((err) => {
+        console.error(err);
+        if (!disposed) {
+          setSettingsLoadError(err instanceof Error ? err.message : String(err));
+        }
+      });
 
     return () => {
       disposed = true;

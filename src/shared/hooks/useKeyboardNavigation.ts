@@ -68,6 +68,9 @@ export const useKeyboardNavigation = ({
   const editingTagsIdRef = useRef(editingTagsId);
   const searchModeRef = useRef(searchMode);
   const filteredAppsRef = useRef(filteredApps);
+  // 输入法组合期间按下的 Enter 会先被输入法用来上屏候选词，粘贴意图不能丢：
+  // 记下来，等 compositionend 之后再执行粘贴（否则必须按两次回车）。
+  const pendingImePasteRef = useRef<ClipboardEntry | null>(null);
 
   useEffect(() => { selectedIndexRef.current = selectedIndex; }, [selectedIndex]);
   useEffect(() => { isKeyboardModeRef.current = isKeyboardMode; }, [isKeyboardMode]);
@@ -80,6 +83,24 @@ export const useKeyboardNavigation = ({
   const filteredFilesRef = useRef(filteredFiles);
   useEffect(() => { filteredFilesRef.current = filteredFiles; }, [filteredFiles]);
   useEffect(() => { searchRef.current = search; }, [search]);
+
+  // 输入法上屏完成后，补发那次被 IME 吞掉的粘贴。
+  useEffect(() => {
+    const handleCompositionEnd = (ev: CompositionEvent) => {
+      const pending = pendingImePasteRef.current;
+      if (!pending) return;
+      pendingImePasteRef.current = null;
+      // 取消输入（Esc）时 data 为空，不触发粘贴。
+      if (!ev.data) return;
+      // 等 IME 提交和 React 状态落地后再走粘贴管线。
+      setTimeout(() => {
+        const latest = historyRef.current.find((item) => item.id === pending.id) ?? pending;
+        copyToClipboard(latest.id, latest.content, latest.content_type, false, latest.is_external, latest.file_preview_exists);
+      }, 0);
+    };
+    window.addEventListener("compositionend", handleCompositionEnd);
+    return () => window.removeEventListener("compositionend", handleCompositionEnd);
+  }, [copyToClipboard]);
 
   useEffect(() => {
     // 监听 Rust 全局键盘钩子发送的导航事件
@@ -140,9 +161,15 @@ export const useKeyboardNavigation = ({
       }
 
       if (action === "enter") {
-        // 防御：搜索框聚焦时不粘贴（Enter 应交给 IME/前端 keydown 处理）
-        if (document.activeElement === searchInputRef.current) return;
-        
+        // 搜索框聚焦时，只有输入法组合期间的 Enter 才放行给 IME；
+        // 非组合状态（例如搜索完选好条目后）按 Enter 应该正常粘贴。
+        if (
+          document.activeElement === searchInputRef.current &&
+          useHistoryStore.getState().isComposing
+        ) {
+          return;
+        }
+
         const isExternalList = searchModeRef.current === 'apps' || searchModeRef.current === 'files';
         const navItems = isExternalList
           ? (searchModeRef.current === 'files' ? filteredFilesRef.current : filteredAppsRef.current)
@@ -170,6 +197,7 @@ export const useKeyboardNavigation = ({
         }
         
         const item = historyRef.current[selectedIndexRef.current];
+        invoke("frontend_log", { msg: `enter(nav-action) idx=${selectedIndexRef.current} len=${historyRef.current.length} item=${item ? item.id : "none"} search="${useHistoryStore.getState().search}"` }).catch(() => {});
         if (item) {
           copyToClipboard(item.id, item.content, item.content_type, false, item.is_external, item.file_preview_exists);
         }
@@ -233,6 +261,7 @@ export const useKeyboardNavigation = ({
       isKeyboardModeRef.current = false;
       setSelectedIndex(0);
       selectedIndexRef.current = 0;
+      pendingImePasteRef.current = null;
       // 搜索框有值时保留搜索状态：用户让搜索框失焦是为了查看搜索结果（同时避免
       // tag 面板遮挡），而不是关闭搜索。仅当无搜索内容时才隐藏搜索框。
       const currentSearch = useHistoryStore.getState().search;
@@ -269,14 +298,28 @@ export const useKeyboardNavigation = ({
         console.log(`[KeyboardNav Debug] Key pressed: ${e.key}, isComposing: ${e.isComposing}, keyCode: ${e.keyCode}`);
       }
 
+
       // 0. IMPORTANT: Never intercept keys while the user is using an IME (e.g. typing Chinese)
-      if (e.isComposing || e.keyCode === 229) {
+      // 注意：keyCode 229 只表示"这个键被输入法处理过"，未组合时也会出现
+      // （Windows 中文输入法对回车很常见）。只有确实处于组合状态才为
+      // Enter 让路，否则第一次回车会被白白吞掉。
+      if (e.isComposing || (e.keyCode === 229 && !isEnter)) {
         if (isArrowUp || isArrowDown) console.log(`[KeyboardNav Debug] Returned early due to IME composition`);
+        // 已经用方向键选中条目时，这次 Enter 的意图是粘贴；IME 吃掉的是
+        // "上屏"那一下，真正的粘贴推迟到 compositionend 之后补发。
+        if (isEnter) {
+          invoke("frontend_log", { msg: `enter swallowed by IME guard (composing=${e.isComposing} keyCode=${e.keyCode}) kbd=${isKeyboardModeRef.current} idx=${selectedIndexRef.current} len=${historyRef.current.length}` }).catch(() => {});
+        }
+        if (isEnter && isKeyboardModeRef.current && activeEl === searchInputRef.current) {
+          const selected = historyRef.current[selectedIndexRef.current];
+          if (selected) pendingImePasteRef.current = selected;
+        }
         return;
       }
       
-      // Allow repeat for Arrow keys
-      if (e.repeat && !isArrowUp && !isArrowDown) return;
+      // Allow repeat for Arrow keys；Enter 在有选中项时也放行：粘贴链路本身
+      // 有同 id 去重，长按不会连发，但某些键盘/输入法会把首次回车标成 repeat。
+      if (e.repeat && !isArrowUp && !isArrowDown && !isEnter) return;
 
       if (isArrowUp || isArrowDown) {
         console.log(`[KeyboardNav Debug] States -> isInputFocused: ${isInputFocused}, isSearchInputFocused: ${isSearchInputFocused}, isEditingTags: ${isEditingTags}, showSettings: ${showSettingsRef.current}, showTagManager: ${showTagManagerRef.current}`);
@@ -285,6 +328,9 @@ export const useKeyboardNavigation = ({
       // 2. Special modes handling (Settings, Tag Manager)
       if (showSettingsRef.current || showTagManagerRef.current) {
         if (isArrowUp || isArrowDown) console.log(`[KeyboardNav Debug] Returned early due to showSettings or showTagManager`);
+        if (isEnter) {
+          invoke("frontend_log", { msg: `enter swallowed by overlay guard (settings=${showSettingsRef.current} tagMgr=${showTagManagerRef.current})` }).catch(() => {});
+        }
         if (isEscape && !e.isComposing && e.keyCode !== 229) {
           invoke("hide_window_cmd").catch(console.error);
         }
@@ -294,6 +340,9 @@ export const useKeyboardNavigation = ({
       // 3. Tag editing mode handling
       if (isEditingTags) {
         if (isArrowUp || isArrowDown) console.log(`[KeyboardNav Debug] Returned early due to isEditingTags`);
+        if (isEnter) {
+          invoke("frontend_log", { msg: `enter swallowed by tag-editing guard (editingTags=${editingTagsIdRef.current})` }).catch(() => {});
+        }
         if (isEscape) return;
         if (isInputFocused && !isSearchInputFocused) return;
         if (isArrowDown || isArrowUp || isEnter) return;
@@ -361,10 +410,15 @@ export const useKeyboardNavigation = ({
 
       // 7. Enter to copy
       if (isEnter) {
-        if (e.isComposing || e.keyCode === 229) return;
+        if (e.isComposing) return;
         
-        // 任何输入框聚焦（含搜索框）都不粘贴，避免与输入法冲突
-        if (isInputFocused) return;
+        // 搜索框聚焦时，非输入法组合状态的 Enter 仍可粘贴；
+        // 其他输入框聚焦仍不粘贴，避免误触发。
+        if (isInputFocused && !isSearchInputFocused) {
+          invoke("frontend_log", { msg: `enter swallowed by input-focus guard (active=${activeEl?.tagName ?? "null"})` }).catch(() => {});
+          return;
+        }
+        if (isSearchInputFocused) e.preventDefault();
         
         const item = historyRef.current[selectedIndexRef.current];
         if (item) {

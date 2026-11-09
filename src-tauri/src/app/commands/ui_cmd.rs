@@ -1,10 +1,16 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_notification::NotificationExt;
 use crate::app_state::SettingsState;
 use crate::database::DbState;
 use crate::error::{AppResult, AppError};
 use crate::infrastructure::repository::settings_repo::SettingsRepository;
+
+/// 前端诊断日志：写进同一个 winpaste.log，方便排查键盘/输入法路径。
+#[tauri::command]
+pub fn frontend_log(msg: String) {
+    crate::info!("[FE] {}", msg);
+}
 
 #[derive(Debug, Serialize)]
 pub struct PlatformInfo {
@@ -43,6 +49,71 @@ pub fn get_platform_info() -> PlatformInfo {
             is_windows_10: false,
             is_windows_11: false,
         }
+    }
+}
+
+/// 把一个(可能已经是 topmost 的)窗口重新抬到 topmost 带最上层,且不抢焦点。
+///
+/// 为什么需要它:Tauri 依赖的 tao 对 `set_always_on_top` 做了 diff —— 窗口标志
+/// 没有变化时直接 return,连 SetWindowPos 都不会调用。预览窗创建时就带
+/// `alwaysOnTop: true`,所以之后每次 `setAlwaysOnTop(true)` 都是空操作,
+/// 一旦被其它 topmost 窗口(主面板每次显示都会把自己抬到最上层)盖住就再也上不来。
+#[tauri::command]
+pub fn raise_window_topmost(app: AppHandle, label: String) -> AppResult<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            IsWindowVisible, SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE,
+        };
+
+        let window = app
+            .get_webview_window(&label)
+            .ok_or_else(|| AppError::Internal(format!("window not found: {}", label)))?;
+        let hwnd_raw = window.hwnd().map_err(|e| AppError::Internal(e.to_string()))?;
+        let hwnd = HWND(hwnd_raw.0 as _);
+        unsafe {
+            // 已隐藏的窗口直接跳过:对它置顶毫无意义。更重要的是,窗口命令走 tao
+            // 事件循环、本命令走异步运行时,二者无顺序保证 —— 前端刚 hide() 完,
+            // 一个滞后的置顶请求仍可能到达这里。若此处带任何强制显示标志
+            // (如 SWP_SHOWWINDOW),就会把刚隐藏的预览窗"复活"到桌面(#54)。
+            if !IsWindowVisible(hwnd).as_bool() {
+                return Ok(());
+            }
+
+            // #54 的最后一道闸:主面板不可见时,预览窗不该是桌面上唯一可见的
+            // 窗口。后端发起的隐藏(粘贴/ESC/点面板外/托盘)不会让前端 generation
+            // 失效 —— 于是在途的 show() 落在 hide() 之后时,前端三道检查全都通过,
+            // 置顶请求反而把残留的预览窗永久抬在桌面最上层。前端那条"过期也不
+            // 隐藏"的路径收不到这里(它在 raise 之前就 return 了),所以两边都要管。
+            if label == crate::app::window_manager::COMPACT_PREVIEW_LABEL {
+                let main_visible = match app.get_webview_window("main") {
+                    Some(main) => match main.hwnd() {
+                        Ok(h) => IsWindowVisible(HWND(h.0 as _)).as_bool(),
+                        Err(_) => false,
+                    },
+                    None => false,
+                };
+                if !main_visible {
+                    let _ = window.hide();
+                    crate::info!("[DEBUG] Main panel not visible -> hid leftover compact preview (#54)");
+                    return Ok(());
+                }
+            }
+
+            // HWND_NOTOPMOST → HWND_TOPMOST 是 Windows 上"重新置顶但不激活"的经典做法:
+            // 只调一次 HWND_TOPMOST 时,若窗口已在 topmost 带内,并不会重新排到带顶。
+            // 注意:绝不带 SWP_SHOWWINDOW —— 本命令只调整 Z 序,不改变可见性。
+            let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, label);
+        Ok(())
     }
 }
 

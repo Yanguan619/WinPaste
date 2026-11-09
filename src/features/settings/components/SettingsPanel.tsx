@@ -21,6 +21,7 @@ export interface SettingsPanelProps {
     // State
     collapsedGroups: Record<string, boolean>;
     autoStart: boolean;
+    autoStartAdmin: boolean;
     silentStart: boolean;
     persistent: boolean;
     persistentLimitEnabled: boolean;
@@ -92,6 +93,7 @@ export interface SettingsPanelProps {
     // Setters/Actions
     toggleGroup: (group: string) => void;
     setAutoStart: (val: boolean) => void;
+    setAutoStartAdmin: (val: boolean) => void;
     setSilentStart: (val: boolean) => void;
     setPersistent: (val: boolean) => void;
     setPersistentLimitEnabled: (val: boolean) => void;
@@ -144,7 +146,7 @@ export interface SettingsPanelProps {
 const SettingsPanel = (props: SettingsPanelProps) => {
     const {
         t, language,
-        collapsedGroups, autoStart, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, autoHideTags, pinnedCollapsed, deleteAfterPaste, moveToTopAfterPaste,
+        collapsedGroups, autoStart, autoStartAdmin, silentStart, persistent, persistentLimitEnabled, persistentLimit, deduplicate, captureFiles, captureRichText, richTextSnapshotPreview, autoHideTags, pinnedCollapsed, deleteAfterPaste, moveToTopAfterPaste,
         sequentialMode, quickPasteEnabled, sequentialHotkey, isRecordingSequential,
         richPasteHotkey, isRecordingRich, searchHotkey, isRecordingSearch,
         privacyProtection, privacyProtectionKinds, setPrivacyProtectionKinds, privacyProtectionCustomRules, setPrivacyProtectionCustomRules, registryWinVEnabled, setRegistryWinVEnabled, showSearchBox, setShowSearchBox, scrollTopButtonEnabled, setScrollTopButtonEnabled, arrowKeySelection, setArrowKeySelection, vibrancyEnabled, setVibrancyEnabled,
@@ -158,7 +160,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         followCaret, setFollowCaret,
         installedApps, appSettings, defaultApps, showAppSelector, dataPath,
 
-        toggleGroup, setAutoStart, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setAutoHideTags, setPinnedCollapsed, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
+        toggleGroup, setAutoStart, setAutoStartAdmin, setSilentStart, setPersistent, setPersistentLimitEnabled, setPersistentLimit, setDeduplicate, setCaptureFiles, setCaptureRichText, setRichTextSnapshotPreview, setAutoHideTags, setPinnedCollapsed, setDeleteAfterPaste, setMoveToTopAfterPaste, saveAppSetting,
         setSequentialModeState, setQuickPasteEnabled, setIsRecordingSequential, updateSequentialHotkey,
         setIsRecordingRich, updateRichPasteHotkey,
         setIsRecordingSearch, updateSearchHotkey,
@@ -236,6 +238,8 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 LabelWithHint={LabelWithHint}
                 autoStart={autoStart}
                 setAutoStart={setAutoStart}
+                autoStartAdmin={autoStartAdmin}
+                setAutoStartAdmin={setAutoStartAdmin}
                 silentStart={silentStart}
                 setSilentStart={setSilentStart}
                 hideTrayIcon={hideTrayIcon}

@@ -66,6 +66,43 @@
     object-fit: contain !important;
 }
 
+/* Pending-thumbnail placeholder must match the compact image height so the
+   row doesn't jump when the background thumbnail streams in. */
+.history-item.compact .image-preview-pending {
+    height: 34px !important;
+    max-height: 34px !important;
+    min-width: 34px;
+    border-radius: 2px;
+}
+
+/* Deleted/moved image placeholder stays inside the compact row height */
+.history-item.compact .image-preview.error-placeholder {
+    height: 34px !important;
+    max-height: 34px !important;
+    min-width: 0;
+    flex-direction: row !important;
+    gap: 6px !important;
+    padding: 0 6px !important;
+    font-size: 11px !important;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.history-item.compact .image-preview.error-placeholder svg {
+    width: 14px;
+    height: 14px;
+    margin-bottom: 0 !important;
+    flex-shrink: 0;
+}
+
+.history-item.compact .image-preview.error-placeholder > span {
+    margin-bottom: 0 !important;
+}
+
+.history-item.compact .image-preview.error-placeholder > span:last-child {
+    display: none !important;
+}
+
 /* Hover Detail Popover */
 /* Original class kept for reference or non-portal usage if any */
 .compact-popover {
@@ -128,14 +165,25 @@
 .history-item.compact .item-tags-container {
     position: absolute;
     bottom: 2px;
-    right: 4px;
+    left: 8px;
+    right: auto;
     margin: 0 !important;
     z-index: 5;
     opacity: 0;
-    max-width: 60%;
+    max-width: calc(100% - 140px);
     flex-wrap: nowrap !important;
     overflow: hidden;
+    justify-content: flex-start;
     transition: opacity 0.2s ease;
+}
+
+.history-item.compact:has(.drag-handle) .item-tags-container {
+    left: 28px;
+}
+
+.history-item.compact .item-tags-container:not(:has(.tag-input)) {
+    -webkit-mask-image: linear-gradient(to right, black 0%, black 72%, transparent 100%);
+    mask-image: linear-gradient(to right, black 0%, black 72%, transparent 100%);
 }
 
 .history-item.compact:hover .item-tags-container,
@@ -148,10 +196,13 @@
     font-size: var(--clipboard-tag-font-size) !important;
     padding: 0px 4px !important;
     min-height: 16px;
+    max-width: 96px;
     line-height: 1;
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Show Drag Handle in Compact Mode */
@@ -382,6 +433,7 @@ body.theme-retro .history-item.compact .ai-options-dropdown button {
     display: flex;
     align-items: center;
     overflow: hidden !important;
+    max-height: none !important;
 }
 
 /* Reduced padding for sensitive blur in compact mode to save height */

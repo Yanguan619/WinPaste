@@ -1,14 +1,248 @@
 use tauri::{AppHandle, Manager, Emitter};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use crate::app_state::SettingsState;
+use crate::database::DbState;
+use crate::infrastructure::repository::settings_repo::SettingsRepository;
 use crate::global_state::*;
 #[cfg(target_os = "windows")]
 use crate::infrastructure::windows_ext::WindowExt;
+#[cfg(target_os = "windows")]
+use crate::app::system::subclass_window_for_taskbar;
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 #[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    GetWindowRect, IsIconic, IsWindowVisible, SetWindowPos, ShowWindow,
+    HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SW_RESTORE, SW_SHOWNA,
+};
+
+// —— 面板显示自检 / 自愈状态 ——
+//
+// 背景(2026-09-29 实证): 钩子与后端一切正常,但"面板窗口可见性"与用户看到的
+// 完全脱节 —— 窗口在系统看来是可见的,屏幕上却什么都没有(透明窗口、被 DWM
+// 遮蔽、最小化、被挪到屏外、或 WebView 渲染进程已死)。此时每次 Win+V 都只是
+// 在一个"幽灵窗口"上空切换,必须重启应用才能恢复。
+static PANEL_HEALTH_TOKEN: AtomicU64 = AtomicU64::new(0);
+static PANEL_HEALTH_ACK: AtomicU64 = AtomicU64::new(0);
+static PANEL_HEALTH_MISSES: AtomicU32 = AtomicU32::new(0);
+static PANEL_HEALTH_LAST_RELOAD_MS: AtomicU64 = AtomicU64::new(0);
+static PANEL_RECOVERY_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 主窗口前端收到 panel-health-ping 后回执;长时间无回执说明渲染进程已死。
+#[tauri::command]
+pub fn panel_health_ack(token: u64) {
+    PANEL_HEALTH_ACK.store(token, Ordering::Relaxed);
+}
+
+fn spawn_panel_health_check(app: AppHandle) {
+    let token = PANEL_HEALTH_TOKEN.fetch_add(1, Ordering::Relaxed) + 1;
+    if app.emit("panel-health-ping", token).is_err() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        if PANEL_HEALTH_ACK.load(Ordering::Relaxed) == token {
+            PANEL_HEALTH_MISSES.store(0, Ordering::Relaxed);
+            return;
+        }
+        // 前端从未回执过(应用刚启动/界面还在加载)时不能当作"渲染进程已死"
+        if PANEL_HEALTH_ACK.load(Ordering::Relaxed) == 0 {
+            return;
+        }
+        let misses = PANEL_HEALTH_MISSES.fetch_add(1, Ordering::Relaxed) + 1;
+        crate::error!(">>> [PANEL] health ping #{} missed ({} consecutive)", token, misses);
+        if misses < 2 {
+            return;
+        }
+        PANEL_HEALTH_MISSES.store(0, Ordering::Relaxed);
+        let now = now_ms();
+        if now.saturating_sub(PANEL_HEALTH_LAST_RELOAD_MS.load(Ordering::Relaxed)) < 60_000 {
+            return;
+        }
+        PANEL_HEALTH_LAST_RELOAD_MS.store(now, Ordering::Relaxed);
+        if let Some(window) = app.get_webview_window("main") {
+            crate::info!(">>> [PANEL] renderer not responding; reloading webview to recover");
+            let _ = window.reload();
+        }
+    });
+}
+
+#[cfg(windows)]
+fn rect_on_any_monitor(window: &tauri::WebviewWindow, rect: &RECT) -> bool {
+    let Ok(monitors) = window.available_monitors() else { return true; };
+    monitors.iter().any(|m| {
+        let pos = m.position();
+        let size = m.size();
+        let left = pos.x;
+        let top = pos.y;
+        let right = left + size.width as i32;
+        let bottom = top + size.height as i32;
+        rect.right > left && rect.left < right && rect.bottom > top && rect.top < bottom
+    })
+}
+
+/// 收集"窗口层"的可见性异常。WebView 渲染进程是否存活由 panel-health-ping 探测。
+#[cfg(windows)]
+fn collect_panel_visibility_issues(window: &tauri::WebviewWindow) -> Vec<&'static str> {
+    let mut issues: Vec<&'static str> = Vec::new();
+    let Ok(hwnd_raw) = window.hwnd() else { return vec!["no-hwnd"]; };
+    let hwnd = HWND(hwnd_raw.0 as _);
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() { issues.push("not-visible"); }
+        if IsIconic(hwnd).as_bool() { issues.push("minimized"); }
+
+        let mut cloaked: u32 = 0;
+        let cloaked_ok = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut _ as _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_ok();
+        if cloaked_ok && cloaked != 0 { issues.push("cloaked"); }
+
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() && !rect_on_any_monitor(window, &rect) {
+            issues.push("offscreen");
+        }
+    }
+    issues
+}
+
+#[cfg(windows)]
+fn centered_on_cursor_monitor(window: &tauri::WebviewWindow) -> Option<(i32, i32)> {
+    let mut point = POINT::default();
+    unsafe { let _ = GetCursorPos(&mut point); }
+    let monitors = window.available_monitors().ok()?;
+    let monitor = monitors
+        .iter()
+        .find(|m| {
+            let pos = m.position();
+            let size = m.size();
+            point.x >= pos.x
+                && point.x < pos.x + size.width as i32
+                && point.y >= pos.y
+                && point.y < pos.y + size.height as i32
+        })
+        .or_else(|| monitors.first())?;
+    let size = window.outer_size().ok();
+    let w = size.as_ref().map(|s| s.width as i32).filter(|v| *v > 0).unwrap_or(360);
+    let h = size.as_ref().map(|s| s.height as i32).filter(|v| *v > 0).unwrap_or(480);
+    let pos = monitor.position();
+    let msize = monitor.size();
+    Some((
+        pos.x + (msize.width as i32 - w) / 2,
+        pos.y + (msize.height as i32 - h) / 2,
+    ))
+}
+
+/// 显示后的自检:有问题就安排一次恢复(在线程里做,避免阻塞输入 worker)。
+#[cfg(windows)]
+fn verify_panel_visibility(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let issues = collect_panel_visibility_issues(window);
+    if issues.is_empty() {
+        crate::info!(">>> [PANEL] show verified");
+        spawn_panel_health_check(app.clone());
+    } else {
+        crate::error!(">>> [PANEL] show verification failed: {:?}", issues);
+        schedule_panel_recovery(app.clone(), issues.join(","));
+    }
+}
+
+#[cfg(windows)]
+fn schedule_panel_recovery(app: AppHandle, reason: String) {
+    if PANEL_RECOVERY_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        recover_panel(&app, &reason);
+        PANEL_RECOVERY_IN_FLIGHT.store(false, Ordering::SeqCst);
+    });
+}
+
+/// 恢复顺序:就地矫正(还原/移回屏内/重新置顶) → 仍不可见则重建主窗口。
+/// 重建等价于"用户手动重启应用后"的状态,是最后兜底。
+#[cfg(windows)]
+fn recover_panel(app: &AppHandle, reason: &str) {
+    crate::info!(">>> [PANEL] attempting recovery: {}", reason);
+    let Some(window) = ensure_main_window(app) else {
+        crate::error!(">>> [PANEL] recovery aborted: main window unavailable");
+        return;
+    };
+
+    if let Ok(hwnd_raw) = window.hwnd() {
+        let hwnd = HWND(hwnd_raw.0 as _);
+        unsafe {
+            if IsIconic(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() && !rect_on_any_monitor(&window, &rect) {
+                if let Some((x, y)) = centered_on_cursor_monitor(&window) {
+                    crate::info!(">>> [PANEL] window off-screen; moving to ({}, {})", x, y);
+                    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+                }
+            }
+            let _ = ShowWindow(hwnd, SW_SHOWNA);
+            let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let issues = collect_panel_visibility_issues(&window);
+    if issues.is_empty() {
+        crate::info!(">>> [PANEL] in-place recovery succeeded");
+        spawn_panel_health_check(app.clone());
+        return;
+    }
+
+    crate::error!(">>> [PANEL] in-place recovery failed ({:?}); rebuilding main window", issues);
+    destroy_main_window(app);
+    // destroy 是异步派发的:给 WebView2 一点时间释放,否则同 label 重建会失败
+    let mut rebuilt = None;
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        if let Some(window) = rebuild_main_window(app) {
+            rebuilt = Some(window);
+            break;
+        }
+    }
+    let Some(rebuilt) = rebuilt else {
+        crate::error!(">>> [PANEL] rebuild failed after retries");
+        return;
+    };
+    if let Some((x, y)) = centered_on_cursor_monitor(&rebuilt) {
+        let _ = rebuilt.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+    let _ = rebuilt.set_focusable(false);
+    NAVIGATION_ENABLED.store(true, Ordering::SeqCst);
+    IS_HIDDEN.store(false, Ordering::Relaxed);
+    IS_MAIN_WINDOW_FOCUSED.store(false, Ordering::Relaxed);
+    let _ = rebuilt.show();
+    if let Ok(hwnd_raw) = rebuilt.hwnd() {
+        let hwnd = HWND(hwnd_raw.0 as _);
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNA);
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+    let _ = app.emit("window-shown", ());
+    crate::info!(">>> [PANEL] main window rebuilt for recovery");
+    spawn_panel_health_check(app.clone());
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MonitorBounds {
@@ -69,26 +303,215 @@ fn remap_fixed_window_position(
     )
 }
 
-pub fn toggle_window(app: &AppHandle) {
+/// Ensure the `main` window exists, rebuilding it if it was released in lightweight mode.
+pub fn ensure_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     if let Some(window) = app.get_webview_window("main") {
+        return Some(window);
+    }
+    rebuild_main_window(app)
+}
+
+fn apply_noactivate_style(window: &tauri::WebviewWindow, pinned: bool) {
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let ex_style = GetWindowLongPtrW(HWND(hwnd.0), GWL_EXSTYLE);
+            let next = if pinned {
+                ex_style | WS_EX_NOACTIVATE.0 as isize
+            } else {
+                ex_style & !(WS_EX_NOACTIVATE.0 as isize)
+            };
+            let _ = SetWindowLongPtrW(HWND(hwnd.0), GWL_EXSTYLE, next);
+        }
+    }
+}
+
+fn persisted_window_size(app: &AppHandle) -> (f64, f64) {
+    if let Some(db) = app.try_state::<DbState>() {
+        let w = db.settings_repo.get("app.window_width").ok().flatten().and_then(|v| v.parse::<u32>().ok());
+        let h = db.settings_repo.get("app.window_height").ok().flatten().and_then(|v| v.parse::<u32>().ok());
+        if let (Some(w), Some(h)) = (w, h) {
+            if w >= 200 && h >= 200 {
+                return (w as f64, h as f64);
+            }
+        }
+    }
+    (352.0, 380.0)
+}
+
+/// Rebuild the `main` window from its config, re-applying runtime state that is otherwise
+/// only set once at startup (pinned/focusable, persisted size, WS_EX_NOACTIVATE, taskbar subclass).
+pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    let config = app.config().app.windows.iter().find(|c| c.label == "main").cloned()?;
+    let pinned = WINDOW_PINNED.load(Ordering::Relaxed);
+
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app, &config).ok()?;
+    builder = builder
+        .visible(false)
+        .focused(false)
+        .always_on_top(pinned)
+        .focusable(!pinned);
+
+    // persisted_window_size returns LOGICAL pixels (see persist_window_size), and
+    // inner_size() expects logical pixels — this pair must stay consistent, otherwise
+    // the rebuilt panel grows by the scale factor on every lightweight-mode cycle.
+    let (w, h) = persisted_window_size(app);
+    builder = builder.inner_size(w, h);
+
+    let window = builder.build().ok()?;
+
+    apply_noactivate_style(&window, pinned);
+
+    #[cfg(windows)]
+    subclass_window_for_taskbar(&window);
+
+    Some(window)
+}
+
+/// 悬停预览窗的 window label(前端 `PREVIEW_WINDOW_LABEL` 必须与之一致)。
+/// 统一成常量:置顶收尾命令要靠它判断"该不该把预览窗收掉" (#54)。
+pub const COMPACT_PREVIEW_LABEL: &str = "compact-preview";
+
+/// Destroy transient panel-UI webview windows (currently only `compact-preview`).
+/// The compact preview is an independent WebviewWindow that, once created, is
+/// only ever hidden — never destroyed — so it survives `main` and keeps a
+/// WebView2 renderer process alive (this is the residual "WebView2: WinPaste"
+/// process seen after enabling lightweight mode following a search).
+///
+/// Sticky notes (`sticky-*`) are intentionally NOT touched: they are user
+/// content pinned to the desktop and must survive lightweight mode.
+fn destroy_transient_windows(app: &AppHandle) {
+    for (label, window) in app.webview_windows() {
+        if label == COMPACT_PREVIEW_LABEL {
+            crate::info!("[lightweight] destroying residual window: {}", label);
+            let _ = window.destroy();
+        }
+    }
+}
+
+/// Destroy the `main` window, releasing its webview and resetting navigation/focus state.
+/// Only called on lightweight-mode entry paths (tray toggle / command / startup),
+/// so transient panel webviews (compact-preview) are torn down here as well.
+pub fn destroy_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        WindowExt::release_win_keys();
+        let _ = window.destroy();
+    }
+    destroy_transient_windows(app);
+    crate::IS_MAIN_WINDOW_FOCUSED.store(false, Ordering::Relaxed);
+    NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
+    NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
+    let _ = app.emit("window-hidden", ());
+}
+
+/// 主面板隐藏路径的后端兜底:直接隐藏悬停预览窗。
+/// 前端 compactPreviewController 依赖 `window-hidden` 事件异步执行 hide(),
+/// 与 placeAndShow 的异步尾部(show/setSize/置顶)存在竞态,偶尔会让预览
+/// 残留在桌面上(#54)。后端在隐藏主面板时同步隐藏一次预览,双保险。
+pub fn hide_compact_preview(app: &AppHandle) {
+    if let Some(preview) = app.get_webview_window(COMPACT_PREVIEW_LABEL) {
+        let _ = preview.hide();
+    }
+}
+
+/// Hide the main window; in lightweight mode destroy it instead so the webview is released.
+pub fn hide_main_window_or_destroy(app: &AppHandle, restore_focus: bool) {
+    let lightweight = app.state::<SettingsState>().lightweight_mode.load(Ordering::Relaxed);
+    if lightweight {
+        destroy_main_window(app);
+        return;
+    }
+
+    // 兜底:主面板隐藏时预览窗必须一起消失,不能只依赖前端事件监听(#54)。
+    hide_compact_preview(app);
+
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        WindowExt::release_win_keys();
+        let _ = window.set_focusable(false);
+        crate::IS_MAIN_WINDOW_FOCUSED.store(false, Ordering::Relaxed);
+        let _ = window.hide();
+        NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
+        NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
+        if restore_focus {
+            let _ = restore_last_focus(app.clone());
+        }
+        let _ = app.emit("window-hidden", ());
+    }
+}
+
+/// Core lightweight-mode toggle shared by the tray handler and the Tauri command.
+pub fn apply_lightweight_mode(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    app.state::<SettingsState>().lightweight_mode.store(enabled, Ordering::Relaxed);
+    if let Some(db) = app.try_state::<DbState>() {
+        let _ = db.settings_repo.set("app.lightweight_mode", &enabled.to_string());
+    }
+    if enabled {
+        destroy_main_window(app);
+    } else {
+        ensure_main_window(app);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_lightweight_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
+    apply_lightweight_mode(&app, enabled)
+}
+
+/// Whether lightweight (record-only) mode is active.
+pub fn is_lightweight(app: &AppHandle) -> bool {
+    app.try_state::<SettingsState>()
+        .map(|s| s.lightweight_mode.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+pub fn toggle_window(app: &AppHandle) {
+    // 轻量模式 = 仅记录：面板不弹出，需到托盘关闭轻量模式后才能使用。
+    if is_lightweight(app) {
+        crate::info!(">>> [TOGGLE] skipped: lightweight mode is on");
+        return;
+    }
+    let window = match ensure_main_window(app) {
+        Some(w) => w,
+        None => {
+            crate::error!(">>> [TOGGLE] ensure_main_window returned None");
+            return;
+        }
+    };
+    {
         #[cfg(windows)]
         let mut active_center: Option<(i32, i32)> = None;
         let is_visible = window.is_visible().unwrap_or(false);
         let is_hidden_by_edge = IS_HIDDEN.load(Ordering::Relaxed);
+        crate::info!(
+            ">>> [TOGGLE] is_visible={} hidden_by_edge={} pinned={}",
+            is_visible,
+            is_hidden_by_edge,
+            WINDOW_PINNED.load(Ordering::Relaxed)
+        );
 
-        if is_visible && !is_hidden_by_edge {
-            #[cfg(target_os = "windows")]
-            WindowExt::release_win_keys();
-            let _ = window.set_focusable(false);
-            let _ = window.hide();
-            
-            let _ = restore_last_focus(app.clone());
-            
+        // 窗口"系统认为可见、用户实际看不到"(幽灵窗口)时,不能把它当成一次 hide
+        // 白白吃掉 —— 否则用户会连按多次都毫无反应。第一下就转入恢复流程。
+        #[cfg(windows)]
+        let phantom_issues: Vec<&str> = if is_visible && !is_hidden_by_edge {
+            collect_panel_visibility_issues(&window)
+        } else {
+            Vec::new()
+        };
+        #[cfg(not(windows))]
+        let phantom_issues: Vec<&str> = Vec::new();
+
+        if is_visible && !is_hidden_by_edge && phantom_issues.is_empty() {
+            crate::info!(">>> [TOGGLE] hiding panel");
+            hide_main_window_or_destroy(app, true);
             IS_HIDDEN.store(false, Ordering::Relaxed);
-            NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
-            NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
-            let _ = app.emit("window-hidden", ());
             return;
+        }
+        if !phantom_issues.is_empty() {
+            crate::error!(">>> [TOGGLE] panel is 'visible' but actually not rendered: {:?}; recovering", phantom_issues);
+            schedule_panel_recovery(app.clone(), phantom_issues.join(","));
         }
 
         IS_HIDDEN.store(false, Ordering::Relaxed);
@@ -108,6 +531,7 @@ pub fn toggle_window(app: &AppHandle) {
                 }
                 if current_hwnd_val != main_hwnd_val {
                     LAST_ACTIVE_HWND.store(current_hwnd_val as usize, Ordering::Relaxed);
+                    crate::infrastructure::windows_api::window_tracker::push_recent_foreground(current_hwnd_val as usize);
                     if let Some(rect) = WindowExt::get_window_rect(hwnd) {
                         let cx = (rect.left + rect.right) / 2;
                         let cy = (rect.top + rect.bottom) / 2;
@@ -398,21 +822,31 @@ pub fn toggle_window(app: &AppHandle) {
         #[cfg(target_os = "windows")]
         {
             if let Ok(hwnd_raw) = window.hwnd() {
+                let hwnd = HWND(hwnd_raw.0 as _);
                 unsafe {
-                    let ex_style = GetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE);
-                    let _ = SetWindowLongPtrW(HWND(hwnd_raw.0), GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as isize);
+                    let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                    let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as isize);
+                    // 最小化过的窗口即使再 ShowWindow 也不会回到可见状态,必须先还原
+                    if IsIconic(hwnd).as_bool() {
+                        crate::info!(">>> [PANEL] window was minimized; restoring before show");
+                        let _ = ShowWindow(hwnd, SW_RESTORE);
+                    }
                 }
                 let _ = window.show();
                 let _ = app.emit("window-shown", ());
                 
                 if pinned {
-                    WindowExt::show_window_no_activate(HWND(hwnd_raw.0));
+                    WindowExt::show_window_no_activate(hwnd);
                 } else {
-                    WindowExt::show_window_no_activate_normal(HWND(hwnd_raw.0));
+                    WindowExt::show_window_no_activate_normal(hwnd);
                 }
+                // 显示后自检:窗口层不可见 → 就地恢复/重建;窗口可见 → 探测渲染进程
+                verify_panel_visibility(app, &window);
             } else {
                 let _ = window.show();
                 let _ = app.emit("window-shown", ());
+                crate::error!(">>> [PANEL] window has no hwnd; falling back to health check");
+                spawn_panel_health_check(app.clone());
             }
         }
 
@@ -467,6 +901,7 @@ pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
                     crate::info!("[DEBUG] activate_window_focus triggered. Current Foreground: {:?}, Our Window: {:?}", fg_hwnd.0 as usize, hwnd_raw.0 as usize);
                     if !fg_hwnd.0.is_null() && fg_hwnd.0 != hwnd_raw.0 {
                         crate::LAST_ACTIVE_HWND.store(fg_hwnd.0 as usize, std::sync::atomic::Ordering::Relaxed);
+                        crate::infrastructure::windows_api::window_tracker::push_recent_foreground(fg_hwnd.0 as usize);
                         crate::info!("[DEBUG] LAST_ACTIVE_HWND successfully updated to: {:?}", fg_hwnd.0 as usize);
                     } else {
                         crate::info!("[DEBUG] LAST_ACTIVE_HWND NOT updated. Is null? {} Or is same as our window? {}", fg_hwnd.0.is_null(), fg_hwnd.0 == hwnd_raw.0);
@@ -488,17 +923,7 @@ pub fn activate_window_focus(app_handle: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn hide_window_cmd(app_handle: AppHandle) -> Result<(), String> {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        #[cfg(target_os = "windows")]
-        WindowExt::release_win_keys();
-        let _ = window.set_focusable(false);
-        crate::IS_MAIN_WINDOW_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
-        let _ = window.hide();
-        NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
-        NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
-        let _ = restore_last_focus(app_handle.clone());
-        let _ = app_handle.emit("window-hidden", ());
-    }
+    hide_main_window_or_destroy(&app_handle, true);
     Ok(())
 }
 
@@ -506,16 +931,7 @@ pub fn hide_window_cmd(app_handle: AppHandle) -> Result<(), String> {
 /// Used when the user clicks outside the panel — the click already transferred
 /// focus naturally, so calling restore_last_focus would cause a focus fight.
 pub fn hide_window_no_restore(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        #[cfg(target_os = "windows")]
-        WindowExt::release_win_keys();
-        let _ = window.set_focusable(false);
-        crate::IS_MAIN_WINDOW_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
-        let _ = window.hide();
-        NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
-        NAVIGATION_MODE_ACTIVE.store(false, Ordering::SeqCst);
-        let _ = app_handle.emit("window-hidden", ());
-    }
+    hide_main_window_or_destroy(app_handle, false);
 }
 
 #[tauri::command]
@@ -578,8 +994,11 @@ pub fn is_main_window_focused() -> bool {
 mod tests {
     use super::{remap_fixed_window_position, MonitorBounds};
 
+    // The remap is proportional, not corner-anchored: a window sitting 10px off
+    // the bottom-right keeps a scaled 10px-ish margin on the new monitor rather
+    // than snapping flush into the corner.
     #[test]
-    fn keeps_bottom_right_anchor_when_switching_monitors() {
+    fn keeps_relative_position_near_bottom_right_corner() {
         let source = MonitorBounds {
             x: 0,
             y: 0,
@@ -600,7 +1019,9 @@ mod tests {
             target,
         );
 
-        assert_eq!(mapped, (4180, 1040));
+        // ratio = 1610/1620 ≈ 0.9938, 670/680 ≈ 0.9853 (near bottom-right, not
+        // exactly at the edge) applied to target spans 2260x1040.
+        assert_eq!(mapped, (4166, 1025));
     }
 
     #[test]
@@ -625,7 +1046,8 @@ mod tests {
             target,
         );
 
-        assert_eq!(mapped, (-800, 250));
+        // ratio 0.5 applied to target spans 1300x500 → (-1600+650, 250).
+        assert_eq!(mapped, (-950, 250));
     }
 
     #[test]

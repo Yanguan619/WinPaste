@@ -136,18 +136,27 @@ body.compact-preview #root > * {
     border-radius: 0 !important;
 }
 
-/* ---- Meta Bar (type, source app, timestamp) ---- */
+/* Media cards can shrink below the meta text width (a small image preview
+   hugs its intrinsic size). Keep the meta on ONE line: it clips/ellipsizes at
+   the card width (the window is sized to the image, so the meta never widens
+   the card) instead of stacking vertically or wrapping into several rows. */
 .compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta {
-    padding: 10px 14px 6px 14px;
-    font-size: 11px;
-    color: #666;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    letter-spacing: 0.01em;
-    line-height: 1;
+    overflow: hidden;
+    flex-wrap: nowrap;
+    white-space: nowrap;
 }
+
+.compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta .meta-row {
+    min-width: 0;
+    flex-shrink: 1;
+}
+
+.compact-preview-root .compact-popover-portal.compact-preview-window .popover-meta .meta-row span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
 
 .popover-meta .meta-row {
     display: flex;
@@ -232,9 +241,13 @@ body.light-mode .compact-preview-root .popover-content {
 
 /* ---- Media Content (image, video, rich image fallback) ---- */
 .compact-preview-root .compact-popover-portal.compact-preview-media {
+    /* Media content shrinks to fit the image, but never below a width that
+       keeps the one-line meta (type • app • time) complete — truncating that
+       info is worse than a little empty space beside a very narrow image.
+       The window size is computed in CompactPreviewWindow from the intrinsic
+       image size + this same floor; media box limits live on .popover-content. */
     min-width: 260px;
     max-width: var(--preview-media-max-width, 520px);
-    max-height: var(--preview-media-max-height, 360px);
 }
 
 .compact-preview-root .compact-popover-portal.compact-preview-media .popover-content {
@@ -335,4 +348,31 @@ body.light-mode .compact-preview-root .popover-content {
     background: rgba(0, 0, 0, 0.06);
     margin: 4px 8px;
     flex-shrink: 0;
+}
+
+/* Sensitive (masked) payloads: the preview window only receives a flag —
+   no plaintext/image data — so hovering a locked item can never leak it. */
+.compact-preview-root .compact-popover-portal.compact-preview-sensitive {
+    min-width: 240px;
+}
+
+.compact-preview-root .compact-preview-masked {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 2px;
+    font-size: 12px;
+    font-style: italic;
+    letter-spacing: 0.2px;
+    color: #b9b9b9;
+    white-space: nowrap;
+}
+
+.compact-preview-root .compact-preview-masked svg {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+.compact-preview-root .compact-popover-portal.compact-preview-window.light-mode .compact-preview-masked {
+    color: #6a6a6a;
 }

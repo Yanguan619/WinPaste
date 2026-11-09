@@ -13,11 +13,9 @@ use crate::infrastructure::repository::sticky_repo::SqliteStickyRepository;
 use crate::services::encryption_queue::init_encryption_queue;
 use crate::services::sensitive_align::spawn_sensitive_alignment;
 use crate::infrastructure::windows_ext::WindowExt;
-use crate::app::window_manager::{toggle_window, release_win_keys, restore_last_focus};
+use crate::app::window_manager::toggle_window;
 #[cfg(target_os = "windows")]
 use crate::app::hooks::{keyboard_proc, mouse_proc};
-#[cfg(target_os = "windows")]
-use crate::app::system::tray_subclass_proc;
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{HINSTANCE, HWND, POINT, RECT};
 #[cfg(target_os = "windows")]
@@ -27,13 +25,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::Shell::SetWindowSubclass;
-#[cfg(target_os = "windows")]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
 static WINDOW_SIZE_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static LAST_WINDOW_SIZE_EVENT_MS: AtomicU64 = AtomicU64::new(0);
 static LAST_WINDOW_SIZE: OnceLock<Mutex<(u32, u32)>> = OnceLock::new();
+static LIGHTWEIGHT_CHECK_ITEM: OnceLock<Mutex<Option<tauri::menu::CheckMenuItem<tauri::Wry>>>> = OnceLock::new();
 
 pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
@@ -57,6 +54,22 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         e
     })?;
     let conn_arc = std::sync::Arc::new(std::sync::Mutex::new(conn));
+    // Dedicated read-only connection for search (see DbState::search_repo).
+    // Falls back to the shared connection when the file cannot be opened
+    // read-only (e.g. a WAL database on read-only media).
+    let search_conn = rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()
+    .map(|conn| {
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(2000));
+        conn
+    });
+    match &search_conn {
+        Some(_) => info!("[DB] dedicated read-only search connection opened"),
+        None => crate::error!("[DB] read-only search connection unavailable; falling back to the shared connection"),
+    }
     let settings_repo = SqliteSettingsRepository::new(conn_arc.clone());
     
     // 4. Initial Settings & Reset Safety
@@ -65,7 +78,7 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let settings = load_settings(&settings_repo);
     
     // 5. App State Management
-    setup_state(app, conn_arc.clone(), &settings, app_dir.clone());
+    setup_state(app, conn_arc.clone(), search_conn, &settings, app_dir.clone());
     app.manage(EncryptionQueueState(init_encryption_queue(app_handle.clone())));
     spawn_sensitive_alignment(app_handle.clone());
     
@@ -76,6 +89,7 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // crate::infrastructure::windows_api::drag_drop::register_emoji_drag_drop(app_handle.clone());
     
     // 7. Background Services & Monitors
+    crate::services::clipboard_ops::cleanup_svg_temp_files();
     start_services(app, &settings, app_handle.clone());
 
     // 7.5 Pre-detect Everything status at startup (once, never re-detect on window show)
@@ -83,7 +97,7 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     crate::infrastructure::windows_api::everything_search::init_everything_status();
 
     // 8. Tray Setup
-    setup_tray(app, settings.hide_tray_icon);
+    setup_tray(app, settings.hide_tray_icon, settings.lightweight_mode);
     
     // 9. Theme Initial Application
     apply_initial_theme(app);
@@ -100,6 +114,13 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // 11. TaskbarCreated & Subclass
     #[cfg(target_os = "windows")]
     setup_taskbar_listener(app);
+
+    // 12. Lightweight mode: release the webview immediately after startup if enabled.
+    // All one-time init above (theme, taskbar subclass, size, focus) has already run,
+    // so the window can be safely destroyed and rebuilt on demand later.
+    if settings.lightweight_mode {
+        crate::app::window_manager::destroy_main_window(&app_handle);
+    }
 
     Ok(())
 }
@@ -172,6 +193,23 @@ fn apply_startup_resets(repo: &impl SettingsRepository) {
             }
         }
     }
+
+    // 管理员权限开机自启动：设置变更需要提权时，前端会先保存意图再重启为管理员。
+    // 这里在（提权）启动时把意图落地为任务计划程序的实际状态。
+    let autostart_admin = repo
+        .get("app.autostart_admin")
+        .unwrap_or(Some("false".to_string()))
+        .unwrap_or("false".to_string());
+    let task_exists = crate::app::commands::system_cmd::is_autostart_admin_enabled();
+    if autostart_admin == "true" {
+        if !task_exists {
+            info!(">>> [STARTUP] Applying pending admin autostart (create task).");
+            let _ = crate::app::commands::system_cmd::set_autostart_admin(true);
+        }
+    } else if task_exists && crate::app::commands::system_cmd::check_is_admin() {
+        info!(">>> [STARTUP] Admin autostart disabled by user, removing task.");
+        let _ = crate::app::commands::system_cmd::set_autostart_admin(false);
+    }
 }
 
 pub struct StartupSettings {
@@ -191,6 +229,7 @@ pub struct StartupSettings {
     pub search_hotkey: String,
     pub sound_enabled: bool,
     pub hide_tray_icon: bool,
+    pub lightweight_mode: bool,
     pub edge_docking: bool,
     pub follow_mouse: bool,
     pub follow_caret: bool,
@@ -200,6 +239,7 @@ pub struct StartupSettings {
     pub main_hotkey: String,
     pub quick_paste_enabled: bool,
     pub arrow_key_selection: bool,
+    pub paste_method: String,
 }
 
 fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
@@ -220,6 +260,7 @@ fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
         search_hotkey: repo.get("app.search_hotkey").unwrap_or(Some("".to_string())).unwrap_or("".to_string()),
         sound_enabled: repo.get("app.sound_enabled").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         hide_tray_icon: repo.get("app.hide_tray_icon").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
+        lightweight_mode: repo.get("app.lightweight_mode").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         edge_docking: repo.get("app.edge_docking").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
         follow_mouse: repo.get("app.follow_mouse").unwrap_or(Some("true".to_string())).map(|v| v == "true").unwrap_or(true),
         follow_caret: repo.get("app.follow_caret").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
@@ -237,15 +278,26 @@ fn load_settings(repo: &impl SettingsRepository) -> StartupSettings {
         main_hotkey: repo.get("app.hotkey").unwrap_or(Some("Win+V".to_string())).unwrap_or("Win+V".to_string()),
         quick_paste_enabled: repo.get("app.quick_paste_enabled").unwrap_or(Some("true".to_string())).map(|v| v == "true").unwrap_or(true),
         arrow_key_selection: repo.get("app.arrow_key_selection").unwrap_or(Some("false".to_string())).map(|v| v == "true").unwrap_or(false),
+        paste_method: repo.get("app.paste_method").unwrap_or(Some("shift_insert".to_string())).unwrap_or("shift_insert".to_string()),
     }
 }
 
-fn setup_state(app: &App, conn_arc: std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>, s: &StartupSettings, app_dir: std::path::PathBuf) {
+fn setup_state(
+    app: &App,
+    conn_arc: std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>,
+    search_conn: Option<rusqlite::Connection>,
+    s: &StartupSettings,
+    app_dir: std::path::PathBuf,
+) {
     let repo = SqliteClipboardRepository::new(conn_arc.clone());
+    let search_repo = match search_conn {
+        Some(conn) => SqliteClipboardRepository::new(std::sync::Arc::new(std::sync::Mutex::new(conn))),
+        None => SqliteClipboardRepository::new(conn_arc.clone()),
+    };
     let settings_repo = SqliteSettingsRepository::new(conn_arc.clone());
     let tag_repo = SqliteTagRepository::new(conn_arc.clone());
     let sticky_repo = SqliteStickyRepository::new(conn_arc.clone());
-    app.manage(DbState { conn: conn_arc, repo, settings_repo, tag_repo, sticky_repo });
+    app.manage(DbState { conn: conn_arc, repo, search_repo, settings_repo, tag_repo, sticky_repo });
     
     app.manage(SettingsState {
         deduplicate: AtomicBool::new(s.deduplicate),
@@ -264,12 +316,14 @@ fn setup_state(app: &App, conn_arc: std::sync::Arc<std::sync::Mutex<rusqlite::Co
         search_hotkey: std::sync::Mutex::new(s.search_hotkey.clone()),
         sound_enabled: AtomicBool::new(s.sound_enabled),
         hide_tray_icon: AtomicBool::new(s.hide_tray_icon),
+        lightweight_mode: AtomicBool::new(s.lightweight_mode),
         edge_docking: AtomicBool::new(s.edge_docking),
         follow_mouse: AtomicBool::new(s.follow_mouse),
         follow_caret: AtomicBool::new(s.follow_caret),
         arrow_key_selection: AtomicBool::new(s.arrow_key_selection),
         main_hotkey: std::sync::Mutex::new(s.main_hotkey.clone()),
         quick_paste_enabled: AtomicBool::new(s.quick_paste_enabled),
+        paste_method: std::sync::Mutex::new(s.paste_method.clone()),
         monitors: std::sync::Mutex::new(Vec::new()),
     });
     
@@ -283,9 +337,19 @@ fn setup_main_window(app: &App, s: &StartupSettings) {
     WINDOW_PINNED.store(effective_pinned, Ordering::Relaxed);
     
     if let Some(window) = app.get_webview_window("main") {
+        // 先关掉原生阴影(无边框窗口的 DWM 边框),再恢复持久化尺寸。
+        //
+        // tao 对"无边框 + 阴影"的窗口会在 set_inner_size 时按阴影内边距补偿窗口矩形;
+        // 而阴影一旦被关掉(前端启动时 set_theme 也会调用 set_shadow(false)),
+        // WM_NCCALCSIZE 不再预留内边距,客户端区域会直接吃掉这部分边框(外框不变),
+        // 于是面板每次重启都比上次退出时宽/高出一个阴影边框(约 14x8px)。
+        // 配置里已设置 "shadow": false,这里再按正确顺序兜底一次。
+        let _ = window.set_shadow(false);
         if let (Some(w), Some(h)) = (s.window_width, s.window_height) {
-            if w >= 360 && h >= 240 {
-                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: w, height: h }));
+            if w >= 200 && h >= 200 {
+                // Stored size is in logical pixels (see persist_window_size); apply as
+                // Size::Logical so a scaled display doesn't misread it as physical.
+                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: w as f64, height: h as f64 }));
             }
         }
         let _ = window.set_always_on_top(effective_pinned);
@@ -692,14 +756,20 @@ fn init_announcement_ping(app: &App, repo: &impl SettingsRepository) {
     }
 }
 
-fn setup_tray(app: &App, hide_tray: bool) {
-    use tauri::menu::{Menu, MenuItem};
+fn setup_tray(app: &App, hide_tray: bool, lightweight: bool) {
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem};
     use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
     let show_i = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>).unwrap();
+    let lightweight_i = CheckMenuItem::with_id(app, "lightweight", "轻量模式（仅记录）", true, lightweight, None::<&str>).unwrap();
     let quit_i = MenuItem::with_id(app, "quit", "退出 winpaste", true, None::<&str>).unwrap();
-    let menu = Menu::with_items(app, &[&show_i, &quit_i]).unwrap();
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../../icons/winpaste.png")).unwrap();
+    let menu = Menu::with_items(app, &[&show_i, &lightweight_i, &quit_i]).unwrap();
+
+    let _ = LIGHTWEIGHT_CHECK_ITEM.set(Mutex::new(Some(lightweight_i.clone())));
+    // Tray icon: extracted from the rounded-corner icon.ico (tray.png is
+    // transparent at the corners), so the tray shows the rounded design
+    // instead of the square winpaste.png.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../../icons/tray.png")).unwrap();
 
     let tray = TrayIconBuilder::with_id("main_tray")
         .icon(icon)
@@ -708,17 +778,38 @@ fn setup_tray(app: &App, hide_tray: bool) {
         .menu(&menu)
         .on_menu_event(|app, event| {
             if event.id.as_ref() == "show" {
-                if let Some(window) = app.get_webview_window("main") {
+                // 轻量模式 = 仅记录，面板不可用；需先关闭轻量模式
+                if crate::app::window_manager::is_lightweight(app) {
+                    // no-op
+                } else if let Some(window) = crate::app::window_manager::ensure_main_window(app) {
                     let _ = window.show();
                     let _ = app.emit("window-shown", ());
                 }
-            } else if event.id.as_ref() == "quit" { app.exit(0); }
+            } else if event.id.as_ref() == "lightweight" {
+                let current = app.state::<crate::app_state::SettingsState>().lightweight_mode.load(Ordering::Relaxed);
+                let next = !current;
+                let _ = crate::app::window_manager::apply_lightweight_mode(app, next);
+                if let Some(cell) = LIGHTWEIGHT_CHECK_ITEM.get() {
+                    if let Ok(guard) = cell.lock() {
+                        if let Some(item) = guard.as_ref() {
+                            let _ = item.set_checked(next);
+                        }
+                    }
+                }
+            } else if event.id.as_ref() == "quit" {
+                crate::global_state::EXIT_REQUESTED.store(true, Ordering::Relaxed);
+                app.exit(0);
+            }
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                let handle = tray.app_handle();
+                // 轻量模式 = 仅记录，面板不可用；需先关闭轻量模式
+                if crate::app::window_manager::is_lightweight(handle) {
+                    // no-op
+                } else if let Some(window) = crate::app::window_manager::ensure_main_window(handle) {
                     let _ = window.show();
-                    let _ = tray.app_handle().emit("window-shown", ());
+                    let _ = handle.emit("window-shown", ());
                     let _ = window.set_focus();
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                     LAST_SHOW_TIMESTAMP.store(now, Ordering::Relaxed);
@@ -747,27 +838,105 @@ fn init_win32_hooks(_app: &App) {
         .name("win32-hooks".to_string())
         .stack_size(2_097_152)
         .spawn(move || {
-        use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, DispatchMessageW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, SetWindowsHookExW, UnhookWindowsHookEx};
+        use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, DispatchMessageW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK};
+        use windows::Win32::System::SystemInformation::GetTickCount;
+        const WM_APP_REINSTALL_HOOKS: u32 = 0x8000 + 0x51;
+
         unsafe {
             HOOK_THREAD_ID.store(windows::Win32::System::Threading::GetCurrentThreadId(), Ordering::Relaxed);
             let h_instance = GetModuleHandleW(None).expect("Failed to get module handle");
-            let h_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(HINSTANCE(h_instance.0)), 0).expect("Failed to set hook");
+            let mut h_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(HINSTANCE(h_instance.0)), 0).expect("Failed to set hook");
             HOOK_HANDLE.store(h_hook.0 as _, Ordering::SeqCst);
-            let h_mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(HINSTANCE(h_instance.0)), 0).expect("Failed to set mouse hook");
+            let mut h_mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(HINSTANCE(h_instance.0)), 0).expect("Failed to set mouse hook");
             HOOK_MOUSE_HANDLE.store(h_mouse_hook.0 as _, Ordering::SeqCst);
-            
+            crate::app::hooks::sync_modifier_state_from_os();
+            V_KEY_DOWN.store(false, Ordering::SeqCst);
+            HOOK_LAST_EVENT_TICK.store(GetTickCount(), Ordering::Relaxed);
+            crate::info!(">>> [HOOK] low-level hooks installed");
+            start_hook_watchdog(HOOK_THREAD_ID.load(Ordering::Relaxed), WM_APP_REINSTALL_HOOKS);
+
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.hwnd.0.is_null() && msg.message == WM_APP_REINSTALL_HOOKS {
+                    // 先装新钩子再摘旧的,避免出现"谁都没在拦"的真空期
+                    match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(HINSTANCE(h_instance.0)), 0) {
+                        Ok(new_hook) => {
+                            let old = HOOK_HANDLE.swap(new_hook.0 as _, Ordering::SeqCst);
+                            if !old.is_null() { let _ = UnhookWindowsHookEx(HHOOK(old as _)); }
+                            h_hook = new_hook;
+                            crate::info!(">>> [HOOK] keyboard hook reinstalled");
+                        }
+                        Err(err) => crate::error!(">>> [HOOK] keyboard hook reinstall failed: {:?}", err),
+                    }
+                    match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(HINSTANCE(h_instance.0)), 0) {
+                        Ok(new_hook) => {
+                            let old = HOOK_MOUSE_HANDLE.swap(new_hook.0 as _, Ordering::SeqCst);
+                            if !old.is_null() { let _ = UnhookWindowsHookEx(HHOOK(old as _)); }
+                            h_mouse_hook = new_hook;
+                        }
+                        Err(err) => crate::error!(">>> [HOOK] mouse hook reinstall failed: {:?}", err),
+                    }
+                    crate::app::hooks::sync_modifier_state_from_os();
+                    V_KEY_DOWN.store(false, Ordering::SeqCst);
+                    HOOK_LAST_EVENT_TICK.store(GetTickCount(), Ordering::Relaxed);
+                    continue;
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
             let _ = UnhookWindowsHookEx(h_hook);
-            let h_mouse = HOOK_MOUSE_HANDLE.swap(null_mut(), Ordering::SeqCst);
-            if !h_mouse.is_null() {
-                let _ = UnhookWindowsHookEx(windows::Win32::UI::WindowsAndMessaging::HHOOK(h_mouse as _));
-            }
+            let _ = UnhookWindowsHookEx(h_mouse_hook);
+            HOOK_HANDLE.store(null_mut(), Ordering::SeqCst);
+            HOOK_MOUSE_HANDLE.store(null_mut(), Ordering::SeqCst);
         }
     }).expect("spawn win32-hooks thread");
+}
+
+/// 底层钩子看门狗。
+///
+/// Windows 会在钩子回调超时(LowLevelHooksTimeout)、休眠恢复、会话切换等场景下
+/// **静默摘除** 低级钩子,而应用侧完全收不到通知。一旦被摘除:
+///   - Win+V 不再被拦截/触发(系统剪贴板历史若关闭则表现为"Win+V 完全没反应")
+///   - 面板导航键拦截失效
+/// 这里每 30s 检查一次:如果线程已经有 60s 没收到任何钩子事件(鼠标移动也算),
+/// 但期间用户确实产生过输入,则判定钩子已失效,给钩子线程发消息就地重装。
+#[cfg(target_os = "windows")]
+fn start_hook_watchdog(hook_thread_id: u32, reinstall_msg: u32) {
+    std::thread::spawn(move || {
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::System::SystemInformation::GetTickCount;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+        use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+
+        const STALE_MS: u32 = 60_000;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            unsafe {
+                let now = GetTickCount();
+                let last_hook = HOOK_LAST_EVENT_TICK.load(Ordering::Relaxed);
+                let since_hook = now.wrapping_sub(last_hook);
+                if since_hook < STALE_MS { continue; }
+
+                let mut info = LASTINPUTINFO {
+                    cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+                    dwTime: 0,
+                };
+                if !GetLastInputInfo(&mut info).as_bool() { continue; }
+                let since_input = now.wrapping_sub(info.dwTime);
+                // 输入发生在"钩子最后一次事件"之后,说明这些输入根本没经过我们的钩子。
+                // (放宽到 5 分钟:钩子失联后用户往往敲几下就停下来了)
+                if since_input < since_hook && since_input < 5 * STALE_MS {
+                    crate::error!(
+                        ">>> [HOOK] no hook events for {}ms but user input was {}ms ago; requesting reinstall",
+                        since_hook, since_input
+                    );
+                    let _ = PostThreadMessageW(hook_thread_id, reinstall_msg, WPARAM(0), LPARAM(0));
+                    // 避免短时间内重复请求(重装本身会刷新心跳)
+                    HOOK_LAST_EVENT_TICK.store(now, Ordering::Relaxed);
+                }
+            }
+        }
+    });
 }
 
 #[cfg(target_os = "windows")]
@@ -777,9 +946,7 @@ fn setup_taskbar_listener(app: &App) {
         if msg != 0 {
             TASKBAR_CREATED_MSG.store(msg, Ordering::Relaxed);
             if let Some(window) = app.get_webview_window("main") {
-                if let Ok(hwnd) = window.hwnd() {
-                    let _ = SetWindowSubclass(HWND(hwnd.0), Some(tray_subclass_proc), 1337, 0);
-                }
+                crate::app::system::subclass_window_for_taskbar(&window);
             }
         }
     }
@@ -821,18 +988,21 @@ pub fn handle_global_shortcut(app: &AppHandle, shortcut: &tauri_plugin_global_sh
         normalize_shortcut_string(&val).parse::<Shortcut>()
     } {
         if shortcut == &seq_s {
-            let is_seq = settings.sequential_mode.load(Ordering::Relaxed);
-            let has_items = {
-                let q_notification = app.state::<PasteQueue>().inner().0.lock().unwrap();
-                !q_notification.items.is_empty()
-            };
-            if is_seq || has_items {
-                tauri::async_runtime::spawn({
-                    let app = app.clone();
-                    async move {
-                        crate::services::paste_queue::paste_next_step(app).await;
-                    }
-                });
+            // 轻量模式 = 仅记录，不执行顺序粘贴
+            if !crate::app::window_manager::is_lightweight(app) {
+                let is_seq = settings.sequential_mode.load(Ordering::Relaxed);
+                let has_items = {
+                    let q_notification = app.state::<PasteQueue>().inner().0.lock().unwrap();
+                    !q_notification.items.is_empty()
+                };
+                if is_seq || has_items {
+                    tauri::async_runtime::spawn({
+                        let app = app.clone();
+                        async move {
+                            crate::services::paste_queue::paste_next_step(app).await;
+                        }
+                    });
+                }
             }
         }
     }
@@ -841,7 +1011,12 @@ pub fn handle_global_shortcut(app: &AppHandle, shortcut: &tauri_plugin_global_sh
         let val = settings.rich_paste_hotkey.lock().unwrap().clone();
         normalize_shortcut_string(&val).parse::<Shortcut>()
     } {
-        if shortcut == &rich_s { crate::services::clipboard_ops::paste_latest_rich(app.clone()); }
+        if shortcut == &rich_s {
+            // 轻量模式 = 仅记录，不执行富文本粘贴
+            if !crate::app::window_manager::is_lightweight(app) {
+                crate::services::clipboard_ops::paste_latest_rich(app.clone());
+            }
+        }
     }
 
     if let Ok(search_s) = {
@@ -872,6 +1047,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                         if let Ok(h) = window.hwnd() {
                             if hwnd.0 != h.0 {
                                 crate::LAST_ACTIVE_HWND.store(hwnd.0 as usize, Ordering::Relaxed);
+                                crate::infrastructure::windows_api::window_tracker::push_recent_foreground(hwnd.0 as usize);
                             }
                         }
                     }
@@ -894,6 +1070,8 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 return;
             }
             api.prevent_close();
+            // 主面板关闭时同步隐藏悬停预览窗,避免预览残留桌面(#54)
+            crate::app::window_manager::hide_compact_preview(&window.app_handle());
             let _ = window.hide();
             let _ = window.app_handle().emit("window-hidden", ());
             NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
@@ -908,10 +1086,21 @@ fn persist_window_size(window: &tauri::Window, width: u32, height: u32) {
         return;
     }
 
+    // Persist the size in *logical* pixels so both restore paths agree on units:
+    // setup_main_window applies Size::Logical, and rebuild_main_window applies
+    // inner_size() — both of which expect logical pixels. `Resized` reports the
+    // size in physical pixels, so divide by the window scale factor (e.g. 1.25/1.5
+    // on scaled displays). Otherwise the saved width is misread on scaled screens,
+    // which (a) resets the panel to the default width after a restart and
+    // (b) makes the panel grow every time the window is rebuilt in lightweight mode.
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+    let logical_width = (width as f64 / scale).round() as u32;
+    let logical_height = (height as f64 / scale).round() as u32;
+
     let store = LAST_WINDOW_SIZE.get_or_init(|| Mutex::new((0, 0)));
     {
         let mut guard = store.lock().unwrap();
-        *guard = (width, height);
+        *guard = (logical_width, logical_height);
     }
 
     let now = std::time::SystemTime::now()
@@ -982,19 +1171,15 @@ fn handle_blur(window: &tauri::Window) {
         .name("handle-blur".to_string())
         .stack_size(1_048_576)
         .spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-            let down = IS_MOUSE_BUTTON_DOWN.load(Ordering::SeqCst) || unsafe {
-                (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 ||
-                (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x02) as u16 & 0x8000) != 0
-            };
-            if !down && matches!(w.is_focused(), Ok(false)) {
-                if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
-                    let _ = w.hide();
-                    let _ = w.app_handle().emit("window-hidden", ());
-                    NAVIGATION_ENABLED.store(false, Ordering::SeqCst);
-                    release_win_keys();
-                    let _ = restore_last_focus(w.app_handle().clone());
-                }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let down = IS_MOUSE_BUTTON_DOWN.load(Ordering::SeqCst) || unsafe {
+            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 ||
+            (windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x02) as u16 & 0x8000) != 0
+        };
+        if !down && matches!(w.is_focused(), Ok(false)) {
+            if !IGNORE_BLUR.load(Ordering::Relaxed) && !WINDOW_PINNED.load(Ordering::Relaxed) {
+                crate::app::window_manager::hide_main_window_or_destroy(&w.app_handle(), true);
             }
-        }).expect("spawn handle-blur thread");
+        }
+    }).expect("spawn handle-blur thread");
 }

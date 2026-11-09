@@ -11,7 +11,8 @@ WinPaste 是一个 Windows 剪贴板增强工具，基于 **Tauri v2**（Rust �
 ```bash
 bun run tauri:dev      # 开发模式，热重载 (Vite 端口 1422)
 bun run tauri:build    # 生产构建 (NSIS 安装包)
-bun run build:portable # 便携版构建 (zip + exe)
+bun run build:installer # 仅构建 NSIS 安装包
+bun run build:portable # 仅构建便携版 (zip + exe)
 bun run test:e2e       # 运行 Playwright e2e 测试
 ```
 
