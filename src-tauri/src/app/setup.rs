@@ -803,17 +803,10 @@ fn setup_tray(app: &App, hide_tray: bool, lightweight: bool) {
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
-                let handle = tray.app_handle();
-                // 轻量模式 = 仅记录，面板不可用；需先关闭轻量模式
-                if crate::app::window_manager::is_lightweight(handle) {
-                    // no-op
-                } else if let Some(window) = crate::app::window_manager::ensure_main_window(handle) {
-                    let _ = window.show();
-                    let _ = handle.emit("window-shown", ());
-                    let _ = window.set_focus();
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-                    LAST_SHOW_TIMESTAMP.store(now, Ordering::Relaxed);
-                }
+                // 与 Win+V 走同一条显示路径（定位到光标、置顶、导航状态复位），
+                // 直接 window.show() 会停在旧位置或在 WS_EX_NOACTIVATE 下看起来没反应。
+                crate::info!(">>> [TRAY] left click");
+                crate::app::window_manager::toggle_window(tray.app_handle());
             }
         })
         .build(app).expect("Failed to build tray");

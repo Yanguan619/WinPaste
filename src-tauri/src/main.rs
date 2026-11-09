@@ -18,9 +18,13 @@ pub mod migration;
 use std::sync::atomic::{Ordering};
 use crate::global_state::*;
 use crate::app::setup;
-use tauri::Emitter;
 
 fn main() {
+    // shortcut: 仅用于 GPU/CPU 渲染对比实验；正式方案未定前保留这个开关
+    if std::env::var("WINPASTE_GPU").map(|v| v.eq_ignore_ascii_case("off")).unwrap_or(false) {
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu");
+    }
+
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
@@ -47,12 +51,12 @@ fn main() {
             // 轻量模式 = 仅记录，二次启动不唤起面板
             if !crate::app::window_manager::is_lightweight(app) {
                 if let Some(window) = crate::app::window_manager::ensure_main_window(app) {
-                    let was_visible = window.is_visible().unwrap_or(false);
-                    let _ = window.show();
-                    if !was_visible {
-                        let _ = app.emit("window-shown", ());
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.set_focus();
+                    } else {
+                        // 与 Win+V / 托盘一致：走完整显示路径（定位到光标、置顶、导航复位）
+                        crate::app::window_manager::toggle_window(app);
                     }
-                    let _ = window.set_focus();
                 }
             }
         }))
