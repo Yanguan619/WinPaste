@@ -21,6 +21,9 @@ pub fn register_hotkey(app_handle: AppHandle, hotkey: String) -> AppResult<()> {
 
     let _ = app_handle.global_shortcut().unregister_all();
 
+    // 主快捷键换成/换离 Win+V 时，同步系统 Win+V 归属（否则系统剪贴板面板会跟着弹）
+    crate::app::commands::system_cmd::sync_win_v_takeover(crate::app::hooks::is_win_v_hotkey(&hotkey));
+
     if !hotkey.is_empty() {
         let normalized = normalize_shortcut_string(&hotkey);
         crate::info!(">>> [DEBUG] Normalized main hotkey: {}", normalized);
