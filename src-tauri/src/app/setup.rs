@@ -919,7 +919,7 @@ fn setup_taskbar_listener(app: &App) {
         if msg != 0 {
             TASKBAR_CREATED_MSG.store(msg, Ordering::Relaxed);
             if let Some(window) = app.get_webview_window("main") {
-                crate::app::system::subclass_window_for_taskbar(&window);
+                crate::app::system::install_window_notifications(&window);
             }
         }
     }

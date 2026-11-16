@@ -7,7 +7,7 @@ use crate::global_state::*;
 #[cfg(target_os = "windows")]
 use crate::infrastructure::windows_ext::WindowExt;
 #[cfg(target_os = "windows")]
-use crate::app::system::subclass_window_for_taskbar;
+use crate::app::system::install_window_notifications;
 
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, POINT, RECT};
@@ -316,6 +316,90 @@ fn remap_fixed_window_position(
     )
 }
 
+/// 面板"合成表面已作废"标记。
+///
+/// 系统唤醒 / DWM 合成器重置 / 显示拓扑变化 / 会话解锁之后，窗口本身和 JS 都还
+/// 活着（IsWindowVisible 正常、未 cloaked、健康自检也照常回执），但 WebView2 的
+/// DirectComposition 表面已经失效。全透明窗口上的一块空表面在 DWM 里就是纯黑，
+/// 而且这种状态无法就地修补 —— 只能在下次唤出时整窗重建。
+static PANEL_SURFACE_STALE: AtomicBool = AtomicBool::new(false);
+/// 同一时刻只允许一个重建流程，避免"浪费标记 / 窗口自愈 / 轻量模式按需重建"并发
+/// 销毁并重建同一个 label 的窗口。
+static PANEL_REBUILD_LOCK: AtomicBool = AtomicBool::new(false);
+/// 距上次重建不足该时长时不再重复重建：唤醒前后同类消息往往连发多条。
+const PANEL_REBUILD_COOLDOWN_MS: u64 = 5_000;
+
+/// 重建互斥锁的守卫，离开作用域自动释放（含 panic 路径）。
+struct RebuildGuard;
+
+impl RebuildGuard {
+    fn acquire() -> Option<Self> {
+        PANEL_REBUILD_LOCK
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()
+            .map(|_| RebuildGuard)
+    }
+}
+
+impl Drop for RebuildGuard {
+    fn drop(&mut self) {
+        PANEL_REBUILD_LOCK.store(false, Ordering::Release);
+    }
+}
+
+/// 记录"面板的合成表面已经作废"，下次唤出时整窗重建。
+///
+/// 该函数由窗口子类回调（窗口线程）直接调用，所以这里只做原子写 + 日志，不做
+/// 任何可能阻塞或重入的窗口操作。
+pub fn mark_panel_surface_stale(reason: &'static str) {
+    if !PANEL_SURFACE_STALE.swap(true, Ordering::AcqRel) {
+        crate::info!(
+            ">>> [PANEL] surface marked stale ({}); panel will be rebuilt on next show",
+            reason
+        );
+    }
+}
+
+/// 若面板的合成表面已作废，销毁并重建主窗口，返回重建后的窗口。
+///
+/// 只应在"即将显示面板"时调用（toggle_window）：重建开销落在用户按下快捷键到
+/// 面板弹出之间，而不是让用户先看到一块黑再等它自愈。
+/// 返回 `None` 表示无需重建或重建失败，调用方应回落到复用现有窗口。
+pub fn rebuild_panel_if_surface_stale(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    if !PANEL_SURFACE_STALE.load(Ordering::Acquire) {
+        return None;
+    }
+
+    // 冷却：刚重建过就不再拆一次，同时清掉标记避免它一直挂着。
+    if last_rebuild_age_ms() < PANEL_REBUILD_COOLDOWN_MS {
+        PANEL_SURFACE_STALE.store(false, Ordering::Release);
+        crate::info!(">>> [PANEL] surface stale but rebuild just happened; reusing window");
+        return None;
+    }
+
+    let _guard = match RebuildGuard::acquire() {
+        Some(guard) => guard,
+        // 另一个线程正在重建，这次唤出直接复用它的结果。
+        None => return None,
+    };
+
+    // 拿到锁后再确认一次：并发调用可能已经被别人处理掉了。
+    if !PANEL_SURFACE_STALE.swap(false, Ordering::AcqRel) {
+        return None;
+    }
+
+    crate::info!(">>> [PANEL] rebuilding panel to recover invalid composition surface");
+    destroy_main_window(app);
+
+    let rebuilt = rebuild_main_window(app);
+    if rebuilt.is_none() {
+        // 重建失败就重新挂上标记，让下次唤出再试一次，而不是永久停在黑屏。
+        PANEL_SURFACE_STALE.store(true, Ordering::Release);
+        crate::error!(">>> [PANEL] surface rebuild failed; will retry on next show");
+    }
+    rebuilt
+}
+
 /// Ensure the `main` window exists, rebuilding it if it was released in lightweight mode.
 pub fn ensure_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     if let Some(window) = app.get_webview_window("main") {
@@ -396,7 +480,7 @@ pub fn rebuild_main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     apply_noactivate_style(&window, pinned);
 
     #[cfg(windows)]
-    subclass_window_for_taskbar(&window);
+    install_window_notifications(&window);
 
     Some(window)
 }
@@ -537,12 +621,19 @@ pub fn toggle_window(app: &AppHandle) {
     if is_lightweight(app) {
         crate::info!(">>> [TOGGLE] lightweight mode: rebuilding panel on demand");
     }
-    let window = match ensure_main_window(app) {
-        Some(w) => w,
-        None => {
-            crate::error!(">>> [TOGGLE] ensure_main_window returned None");
-            return;
-        }
+
+    // 唤醒/合成器重置之后，窗口和 JS 都还活着但 WebView2 的合成表面已经作废，
+    // 继续用旧窗口显示只会得到一块黑（窗口层自检和健康自检都看不出来）。因此显示
+    // 之前先整窗重建；重建不可用时才回落到复用现有窗口。
+    let window = match rebuild_panel_if_surface_stale(app) {
+        Some(rebuilt) => rebuilt,
+        None => match ensure_main_window(app) {
+            Some(w) => w,
+            None => {
+                crate::error!(">>> [TOGGLE] ensure_main_window returned None");
+                return;
+            }
+        },
     };
     {
         #[cfg(windows)]
