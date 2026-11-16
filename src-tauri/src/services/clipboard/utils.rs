@@ -2,11 +2,7 @@ use crate::domain::models::ClipboardEntry;
 use crate::database::save_image_to_file;
 use base64::{engine::general_purpose, Engine as _};
 use regex::Regex;
-use reqwest::header::CONTENT_TYPE;
-use std::io::Read;
-use std::path::Path;
 use std::sync::OnceLock;
-use std::time::Duration;
 use urlencoding::decode;
 
 const HTML_PREVIEW_MAX_CHARS: usize = 5000;
@@ -17,149 +13,6 @@ const TEXT_PREVIEW_TRUNCATED_CHARS: usize = TEXT_PREVIEW_MAX_CHARS - 3;
 const RICH_TEXT_PREVIEW_FALLBACK: &str = "[Rich Text Content]";
 pub const RICH_IMAGE_FALLBACK_PREFIX: &str = "<!--WINPASTE_RICH_IMAGE:";
 pub const RICH_IMAGE_FALLBACK_SUFFIX: &str = "-->";
-const REMOTE_IMAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
-const REMOTE_IMAGE_TIMEOUT_SECS: u64 = 4;
-
-fn normalize_image_ext(ext: &str) -> Option<&'static str> {
-    match ext.to_ascii_lowercase().as_str() {
-        "png" => Some("png"),
-        "jpg" | "jpeg" => Some("jpg"),
-        "gif" => Some("gif"),
-        "webp" => Some("webp"),
-        "bmp" => Some("bmp"),
-        _ => None,
-    }
-}
-
-fn image_ext_from_mime(mime: &str) -> Option<&'static str> {
-    match mime {
-        "image/png" => Some("png"),
-        "image/jpeg" => Some("jpg"),
-        "image/gif" => Some("gif"),
-        "image/webp" => Some("webp"),
-        "image/bmp" => Some("bmp"),
-        _ => None,
-    }
-}
-
-fn image_ext_from_url(url: &str) -> Option<&'static str> {
-    let parsed = reqwest::Url::parse(url).ok()?;
-    let ext = Path::new(parsed.path())
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    normalize_image_ext(ext)
-}
-
-fn image_ext_from_bytes(bytes: &[u8]) -> Option<&'static str> {
-    let format = image::guess_format(bytes).ok()?;
-    match format {
-        image::ImageFormat::Png => Some("png"),
-        image::ImageFormat::Jpeg => Some("jpg"),
-        image::ImageFormat::Gif => Some("gif"),
-        image::ImageFormat::WebP => Some("webp"),
-        image::ImageFormat::Bmp => Some("bmp"),
-        _ => None,
-    }
-}
-
-fn image_mime_by_ext(ext: &str) -> &'static str {
-    match ext {
-        "jpg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        _ => "image/png",
-    }
-}
-
-fn normalize_remote_img_url(src: &str) -> Option<String> {
-    let trimmed = src.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return Some(trimmed.to_string());
-    }
-    if trimmed.starts_with("//") {
-        return Some(format!("https:{}", trimmed));
-    }
-    None
-}
-
-fn fetch_remote_image(url: &str) -> Option<(Vec<u8>, &'static str)> {
-    static REMOTE_IMG_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
-
-    let client = REMOTE_IMG_CLIENT.get_or_init(|| {
-        reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(REMOTE_IMAGE_TIMEOUT_SECS))
-            .redirect(reqwest::redirect::Policy::limited(8))
-            .build()
-            .unwrap_or_else(|_| reqwest::blocking::Client::new())
-    });
-
-    let resp = client
-        .get(url)
-        .header("Accept", "image/*")
-        .send()
-        .ok()?;
-
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let content_len = resp.content_length().unwrap_or(0);
-    if content_len > REMOTE_IMAGE_MAX_BYTES as u64 {
-        return None;
-    }
-
-    let mime = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    let mut limited = resp.take((REMOTE_IMAGE_MAX_BYTES as u64) + 1);
-    let mut bytes = Vec::new();
-    if limited.read_to_end(&mut bytes).is_err() {
-        return None;
-    }
-    if bytes.is_empty() || bytes.len() > REMOTE_IMAGE_MAX_BYTES {
-        return None;
-    }
-
-    let ext = image_ext_from_mime(&mime)
-        .or_else(|| image_ext_from_url(url))
-        .or_else(|| image_ext_from_bytes(&bytes))?;
-
-    Some((bytes, ext))
-}
-
-fn save_image_bytes_to_attachments(
-    bytes: &[u8],
-    ext: &str,
-    attachments_dir: &Path,
-) -> Option<String> {
-    let ext = normalize_image_ext(ext)?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    use std::hash::{Hash, Hasher};
-    bytes.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let file_name = format!("img_{:x}.{}", hash, ext);
-    let target = attachments_dir.join(file_name);
-    if !target.exists() {
-        std::fs::write(&target, bytes).ok()?;
-    }
-    let path = target.to_string_lossy().replace('\\', "/");
-    if path.starts_with('/') {
-        Some(format!("file://{}", path))
-    } else {
-        Some(format!("file:///{}", path))
-    }
-}
 
 fn truncate_chars_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
     if text.chars().count() <= max_chars {
@@ -459,7 +312,7 @@ fn extract_plain_text_from_htmlish(text: &str) -> String {
         .replace_all(&repaired, "\n");
     let without_tags = TAG_RE
         .get_or_init(|| Regex::new(r"(?is)<[^>]+>").unwrap())
-        .replace_all(with_breaks.as_ref(), " ");
+        .replace_all(with_breaks.as_ref(), "");
     let collapsed = normalize_plain_text_layout(&decode_basic_html_entities(without_tags.as_ref()));
     let cleaned = strip_leading_office_metadata_text(&collapsed);
     if cleaned.is_empty() {
@@ -473,28 +326,43 @@ fn extract_plain_text_from_htmlish(text: &str) -> String {
 }
 
 pub fn derive_rich_text_content(content: &str, html_content: Option<&str>) -> String {
-    let html_text = html_content
-        .map(extract_plain_text_from_htmlish)
-        .filter(|text| !text.is_empty());
-    if let Some(text) = html_text {
-        return text;
+    let trimmed = content.trim();
+
+    // 1. 优先使用真实的纯文本（CF_UNICODETEXT 由源应用生成，最精确）。
+    //    从 HTML 提取文本会把标签边界当成空白，破坏代码等高精度内容
+    //    （例如 VSCode 复制代码后每个符号周围多出空格）。
+    //    仅当纯文本本身是 HTML 标记或 Office/WPS 噪声时才回退到 HTML 提取。
+    if !trimmed.is_empty()
+        && !looks_like_html_fragment(trimmed)
+        && !is_office_style_definition_text(&collapse_preview_whitespace(trimmed))
+    {
+        // 保留原始格式（缩进、标点），仅统一换行符
+        return trimmed.replace("\r\n", "\n").replace('\r', "\n");
     }
 
-    if looks_like_html_fragment(content) {
-        let content_text = extract_plain_text_from_htmlish(content);
+    // 2. 回退：从 HTML 提取可读文本
+    if let Some(html) = html_content {
+        let html_text = extract_plain_text_from_htmlish(html);
+        if !html_text.is_empty() {
+            return html_text;
+        }
+    }
+
+    // 3. content 本身可能是 HTML 片段
+    if looks_like_html_fragment(trimmed) {
+        let content_text = extract_plain_text_from_htmlish(trimmed);
         if !content_text.is_empty() {
             return content_text;
         }
     }
 
-    sanitize_rich_text_plain_text(content)
+    sanitize_rich_text_plain_text(trimmed)
 }
 
 pub fn build_entry_preview(content_type: &str, content: &str, html_content: Option<&str>) -> String {
     if content_type == "image" {
         return "[Image Content]".to_string();
     }
-
     let preview_text = if content_type == "rich_text" {
         let clean_text = derive_rich_text_content(content, html_content);
         let preview = collapse_preview_whitespace(&clean_text);
@@ -520,6 +388,100 @@ pub fn build_entry_preview(content_type: &str, content: &str, html_content: Opti
     } else {
         preview_text
     }
+}
+
+/// Build a small PNG thumbnail data URL from an image `data:` URL (or a local
+/// file path), capped to `max_dim` px on the longest edge.
+/// Used to serve lightweight list thumbnails for `data:` image entries whose
+/// full multi-MB payload is only fetched on demand (copy/paste/preview).
+/// Returns None when the image cannot be decoded (e.g. SVG — the image crate
+/// has no SVG decoder; callers keep the original content for those).
+pub fn build_image_thumbnail_data_url(source: &str, max_dim: u32) -> Option<String> {
+    use std::io::Cursor;
+    use image::ImageEncoder;
+
+    let img = if source.starts_with("data:") {
+        let payload = source.splitn(2, ',').nth(1)?.trim();
+        let bytes = general_purpose::STANDARD.decode(payload).ok()?;
+        image::load_from_memory(&bytes).ok()?
+    } else {
+        image::open(source).ok()?
+    };
+
+    let thumb = img.thumbnail(max_dim, max_dim);
+    let rgba = thumb.to_rgba8();
+    let mut out: Vec<u8> = Vec::new();
+    let mut cursor = Cursor::new(&mut out);
+    let encoder = image::codecs::png::PngEncoder::new_with_quality(
+        &mut cursor,
+        image::codecs::png::CompressionType::Fast,
+        image::codecs::png::FilterType::NoFilter,
+    );
+    encoder
+        .write_image(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        general_purpose::STANDARD.encode(&out)
+    ))
+}
+
+/// Build a WebP preview data URL from an image `data:` URL (or a local file
+/// path), capped to `max_dim` px on the longest edge.
+///
+/// Used by the hover preview: shipping a multi-MB base64 screenshot over IPC
+/// (and decoding the full-size image in the preview webview) is what made the
+/// compact preview feel slow. Lossless WebP ≈ PNG size, but Chromium decodes
+/// it much faster. Returns None when the image cannot be decoded (e.g. SVG)
+/// or is already within `max_dim` — callers then keep the original content;
+/// note `thumbnail()` upscales, so the size check must be explicit.
+pub fn build_image_preview_data_url(source: &str, max_dim: u32) -> Option<String> {
+    use image::ImageEncoder;
+    use std::io::Cursor;
+
+    let img = if source.starts_with("data:") {
+        let payload = source.splitn(2, ',').nth(1)?.trim();
+        let bytes = general_purpose::STANDARD.decode(payload).ok()?;
+        image::load_from_memory(&bytes).ok()?
+    } else {
+        // Header-only dimension check: a small local file doesn't need a full
+        // decode just to learn it fits the target box.
+        if let Ok((w, h)) = image::image_dimensions(source) {
+            if w <= max_dim && h <= max_dim {
+                return None;
+            }
+        }
+        image::open(source).ok()?
+    };
+
+    // Explicit guard: `thumbnail()` scales UP to fit the target box, which
+    // would turn a small icon into a huge blurry preview.
+    if img.width() <= max_dim && img.height() <= max_dim {
+        return None;
+    }
+
+    let preview = img.thumbnail(max_dim, max_dim);
+    let rgba = preview.to_rgba8();
+    let mut out: Vec<u8> = Vec::new();
+    let cursor = Cursor::new(&mut out);
+    let encoder = image::codecs::webp::WebPEncoder::new_lossless(cursor);
+    encoder
+        .write_image(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .ok()?;
+    Some(format!(
+        "data:image/webp;base64,{}",
+        general_purpose::STANDARD.encode(&out)
+    ))
 }
 
 pub fn attach_rich_image_fallback(html: &str, payload: &str) -> String {
@@ -549,7 +511,7 @@ pub fn split_rich_html_and_image_fallback(html: &str) -> (String, Option<String>
     (html.to_string(), None)
 }
 
-pub fn externalize_rich_image_fallback(html: &str, data_dir: &Path) -> String {
+pub fn externalize_rich_image_fallback(html: &str, data_dir: &std::path::Path) -> String {
     let (clean_html, payload_opt) = split_rich_html_and_image_fallback(html);
     let Some(payload) = payload_opt else {
         return html.to_string();
@@ -568,6 +530,16 @@ pub fn externalize_rich_image_fallback(html: &str, data_dir: &Path) -> String {
 }
 
 pub fn truncate_entry_for_ui(mut entry: ClipboardEntry) -> ClipboardEntry {
+    // Strip heavy content for IPC: image/file/video are rendered from external paths or thumbnails.
+    if entry.content_type == "image"
+        || entry.content_type == "file"
+        || entry.content_type == "video"
+    {
+        entry.content = String::new();
+        entry.html_content = None;
+        return entry;
+    }
+
     if (entry.content_type == "text"
         || entry.content_type == "code"
         || entry.content_type == "url"
@@ -660,7 +632,65 @@ pub fn truncate_html_for_preview(html: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_entry_preview, derive_rich_text_content, parse_cf_html, truncate_html_for_preview};
+    use super::{build_entry_preview, contains_sensitive_info, derive_rich_text_content, parse_cf_html, truncate_html_for_preview, build_image_preview_data_url};
+
+    #[test]
+    fn sensitive_detection_matches_ai_tokens_with_sk_prefix() {
+        let kinds = vec!["secret".to_string()];
+        let rules: Vec<String> = vec![];
+        for token in [
+            "sk-1234567890abcdef1234567890abcdef", // DeepSeek 风格
+            "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", // OpenAI project key
+            "sk-ant-api03-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", // Anthropic
+            "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ABCD", // OpenAI legacy
+        ] {
+            assert!(contains_sensitive_info(token, &kinds, &rules), "应识别 sk- 前缀 token: {token}");
+        }
+    }
+
+    #[test]
+    fn sensitive_detection_does_not_match_plain_text_with_sk_substring() {
+        let kinds = vec!["secret".to_string()];
+        let rules: Vec<String> = vec![];
+        for text in [
+            "ask-me-anything-about-coding",
+            "Task-1234567890 (normal text)",
+            "The sky is blue today",
+            "编号 sk-2024080812345678 已生成", // short sk- prefix: not a key
+            "https://example.com/sk-abcdefghijklm", // URL path segment
+            "prefix sk-abcdefghijklmnopqrstuvwxyz0123456789", // sk- in the middle
+        ] {
+            assert!(!contains_sensitive_info(text, &kinds, &rules), "不应误报: {text}");
+        }
+    }
+
+    #[test]
+    fn sensitive_detection_sk_requires_exact_prefix_and_total_length() {
+        let kinds = vec!["secret".to_string()];
+        let rules: Vec<String> = vec![];
+
+        for text in ["sk-12345678901234567"] {
+            assert!(
+                !contains_sensitive_info(text, &kinds, &rules),
+                "总长度未超过 20 位不应识别: {text}"
+            );
+        }
+        assert!(contains_sensitive_info("sk-123456789012345678", &kinds, &rules));
+    }
+
+    #[test]
+    fn sensitive_detection_still_matches_other_secret_patterns() {
+        let kinds = vec!["secret".to_string()];
+        let rules: Vec<String> = vec![];
+        for text in [
+            "password: hunter2hunter2hunter2",
+            "api_key=abcdefghijklmnopqrstuvwxyz1234",
+            "token = 1234567890abcdefghijklmnopqrstuv",
+            "ghp_abcdefghijklmnopqrstuvwxyz123456",
+        ] {
+            assert!(contains_sensitive_info(text, &kinds, &rules), "应识别其他密钥模式: {text}");
+        }
+    }
 
     #[test]
     fn rich_text_preview_prefers_readable_html_text() {
@@ -737,6 +767,81 @@ mod tests {
         assert!(parsed.starts_with("<table"));
         assert!(parsed.contains("<td>A</td>"));
     }
+
+    #[test]
+    fn rich_text_prefers_plain_text_over_syntax_highlighted_html() {
+        // VSCode 复制代码：CF_UNICODETEXT 是正确的代码，
+        // HTML 是语法高亮版本（每个 token 一个 <span>）。
+        // 必须优先使用纯文本，标签边界不能变成空格。
+        let text = "const { data, fetchNextPage, hasNextPage } = useInfiniteQuery();";
+        let html = concat!(
+            "<div>",
+            "<span>const</span> <span>{</span> <span>data</span><span>,</span> <span>fetchNextPage</span><span>,</span>",
+            "</div>"
+        );
+
+        let content = derive_rich_text_content(text, Some(html));
+
+        assert_eq!(content, "const { data, fetchNextPage, hasNextPage } = useInfiniteQuery();");
+    }
+
+    #[test]
+    fn rich_text_html_extraction_keeps_token_boundaries_clean() {
+        // 纯文本缺失时从 HTML 提取：标签替换为空串，
+        // 原本的空格文本节点保留，标签边界不再产生多余空格。
+        let html = "<div><span>const</span> <span>{</span> <span>data</span><span>,</span> <span>next</span></div>";
+        let content = derive_rich_text_content("", Some(html));
+        // "," 紧贴 "data"（修复前会是 "data ,"），"next" 前的空格是原始文本节点
+        assert_eq!(content, "const { data, next");
+
+        // 等号两侧的原始空格保留
+        let html2 = "<div><span>a</span><span> = </span><span>b</span></div>";
+        assert_eq!(derive_rich_text_content("", Some(html2)), "a = b");
+    }
+
+    #[test]
+    fn image_preview_data_url_resizes_to_max_dim() {
+        use base64::{engine::general_purpose, Engine as _};
+        use image::Rgba;
+
+        let mut img = image::RgbaImage::new(800, 400);
+        for (x, _y, px) in img.enumerate_pixels_mut() {
+            *px = Rgba([(x % 256) as u8, 128, 64, 255]);
+        }
+        let mut png = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut png);
+            image::RgbaImage::write_to(&img, &mut cursor, image::ImageFormat::Png).unwrap();
+        }
+        let data_url = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&png));
+
+        let preview = build_image_preview_data_url(&data_url, 400).expect("preview should build");
+        assert!(preview.starts_with("data:image/webp;base64,"));
+
+        let payload = preview.splitn(2, ',').nth(1).unwrap();
+        let bytes = general_purpose::STANDARD.decode(payload).unwrap();
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(decoded.width(), 400);
+        assert_eq!(decoded.height(), 200);
+    }
+
+    #[test]
+    fn image_preview_data_url_never_upscales() {
+        use base64::{engine::general_purpose, Engine as _};
+
+        let mut png = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut png);
+            image::RgbaImage::from_pixel(5, 5, image::Rgba([1, 2, 3, 255]))
+                .write_to(&mut cursor, image::ImageFormat::Png)
+                .unwrap();
+        }
+        let data_url = format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&png));
+
+        // Already within the target box: no resize is needed, so the original
+        // content must be kept (thumbnail() would otherwise upscale to 100x100).
+        assert!(build_image_preview_data_url(&data_url, 100).is_none());
+    }
 }
 
 pub fn detect_content_type(text: &str) -> String {
@@ -791,7 +896,14 @@ pub fn contains_sensitive_info(text: &str, kinds: &[String], custom_rules: &[Str
         if re.is_match(text) { return true; }
     }
     if has_kind("secret") {
-        let re = SECRET_RE.get_or_init(|| Regex::new(r"(?ix)((?:sk|pk|ghp|gho|github_pat|AIza|AKIA|ya29)[-_][\w\-]{20,}|(?:password|secret|api[_-]?key|access[_-]?key|token|bearer)[\s:=]+[\w\-]{16,})").unwrap());
+        // sk- keys: only when the content itself starts with sk-, and the
+        // total length exceeds 20 characters. Mid-text sk- fragments (e.g.
+        // "ask-..." or "prefix sk-...") must not trigger encryption.
+        let candidate = text.trim_start();
+        if candidate.chars().count() > 20 && candidate.starts_with("sk-") {
+            return true;
+        }
+        let re = SECRET_RE.get_or_init(|| Regex::new(r"(?ix)((?:pk|ghp|gho|github_pat|AIza|AKIA|ya29)[-_][\w\-]{20,}|(?:password|secret|api[_-]?key|access[_-]?key|token|bearer)[\s:=]+[\w\-]{16,})").unwrap());
         if re.is_match(text) { return true; }
     }
     if has_kind("password") {
@@ -851,14 +963,8 @@ pub fn embed_local_images(html: &str) -> String {
             }
         }
 
-        if let Some(remote_url) = normalize_remote_img_url(src) {
-            if let Some((bytes, ext)) = fetch_remote_image(&remote_url) {
-                let b64 = general_purpose::STANDARD.encode(&bytes);
-                let mime = image_mime_by_ext(ext);
-                let data_url = format!("data:{};base64,{}", mime, b64);
-                return format!("{}{}{}", prefix, data_url, suffix);
-            }
-        }
+        // 远程图片不再在捕获期同步下载（会阻塞剪贴板监听线程，
+        // 每张图最多 4 秒超时）。保留原 URL，预览时由 WebView 直接加载。
         format!("{}{}{}", prefix, src, suffix)
     }).to_string()
 }
@@ -912,13 +1018,8 @@ pub fn process_local_images_in_html(html: &str, data_dir: &std::path::Path) -> S
             }
         }
 
-        if let Some(remote_url) = normalize_remote_img_url(src) {
-            if let Some((bytes, ext)) = fetch_remote_image(&remote_url) {
-                if let Some(file_src) = save_image_bytes_to_attachments(&bytes, ext, &attachments_dir) {
-                    return format!("{}{}{}", prefix, file_src, suffix);
-                }
-            }
-        }
+        // 远程图片不再在捕获期同步下载（会阻塞剪贴板监听线程，
+        // 每张图最多 4 秒超时）。保留原 URL，预览时由 WebView 直接加载。
         format!("{}{}{}", prefix, src, suffix)
     }).to_string()
 }

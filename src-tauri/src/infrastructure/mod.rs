@@ -49,6 +49,11 @@ pub mod windows_api {
         pub fn scan_installed_apps() -> Vec<serde_json::Value> { vec![] }
         pub fn get_associated_apps(_ext: &str) -> Vec<serde_json::Value> { vec![] }
     }
+
+    pub mod everything_search {
+        pub fn is_everything_running() -> bool { false }
+        pub fn search_apps_via_everything(_keyword: &str, _max_results: u32) -> Result<Vec<serde_json::Value>, String> { Ok(vec![]) }
+    }
     
     pub mod drag_drop {
         pub fn register_emoji_drag_drop(_app_handle: tauri::AppHandle) {}

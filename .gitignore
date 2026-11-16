@@ -12,6 +12,9 @@ src-tauri/target/
 target-codex-*/
 artifacts/
 
+# Release artifacts (portable zip etc.)
+artifacts/
+
 # Runtime files
 *.db
 *.log
@@ -23,5 +26,14 @@ artifacts/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Local AI assistant session memory (not part of the product)
+.workbuddy/
+.cortexkit/
+.mimocode/
+
+# Local one-off diagnostic tools (e.g. tools/winprobe — window residue probe).
+# Kept locally for debugging; not part of the shipped product or its history.
+tools/
 
 TODO.md

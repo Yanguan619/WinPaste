@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useHistoryStore } from "../store/historyStore";
-import { useSettingsStore } from "../store/settingsStore";
 import type { ClipboardEntry } from "../types";
 
 interface UseHistoryFetchOptions {
@@ -23,16 +22,17 @@ export const useHistoryFetch = ({
     isLoadingMore
   } = useHistoryStore();
 
-  const {
-    persistentLimitEnabled,
-    persistentLimit
-  } = useSettingsStore();
-
   const loadingRef = useRef(false);
   const fetchSeqRef = useRef(0);
   const lastRequestedOffsetRef = useRef<number | null>(null);
   const currentOffsetRef = useRef(currentOffset);
   const historyLengthRef = useRef(history.length);
+
+  // 搜索词/类型筛选放进 ref：让 fetchHistory 的引用保持稳定。否则它随每次搜索、
+  // 每次设置加载而换新引用，所有依赖它的 effect（挂载、settingsLoaded、搜索、标签）
+  // 会连带重跑，一次开面板就会重复拉 5 次全表。
+  const paramsRef = useRef({ debouncedSearch, typeFilter });
+  paramsRef.current = { debouncedSearch, typeFilter };
 
   useEffect(() => {
     currentOffsetRef.current = currentOffset;
@@ -43,9 +43,12 @@ export const useHistoryFetch = ({
   }, [history.length]);
 
   const PAGE_SIZE = 200;
+  /** 前端最多保留 1000 条记录，超出部分从左侧淘汰 */
+  const MAX_FRONTEND_HISTORY = 1000;
 
   const fetchHistory = useCallback(
     async (reset = false) => {
+      const { debouncedSearch, typeFilter } = paramsRef.current;
       const seq = ++fetchSeqRef.current;
       try {
         if (reset) {
@@ -105,7 +108,12 @@ export const useHistoryFetch = ({
               nextItems = data.filter((item) => !existingIds.has(item.id) || item.id === 0);
 
               if (nextItems.length === 0) return prev;
-              return [...prev, ...nextItems];
+              const merged = [...prev, ...nextItems];
+              // Cap frontend memory: keep only the most recent entries
+              if (merged.length > MAX_FRONTEND_HISTORY) {
+                return merged.slice(merged.length - MAX_FRONTEND_HISTORY);
+              }
+              return merged;
             });
 
             setCurrentOffset(prev => (typeof prev === 'number' ? prev : 0) + dbItemsCount);
@@ -118,10 +126,7 @@ export const useHistoryFetch = ({
       }
     },
     [
-      debouncedSearch,
-      typeFilter,
-      persistentLimit,
-      persistentLimitEnabled,
+      // 依赖里的搜索词/筛选/limit 已改走 paramsRef，保持引用稳定，避免连带重跑。
       setCurrentOffset,
       setHasMore,
       setHistory

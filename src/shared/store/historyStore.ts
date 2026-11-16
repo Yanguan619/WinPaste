@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { ClipboardEntry } from '../types';
 
+export type SearchMode = 'clipboard' | 'apps' | 'files';
+
 interface HistoryState {
   history: ClipboardEntry[];
   search: string;
@@ -16,6 +18,7 @@ interface HistoryState {
   hasMore: boolean;
   currentOffset: number;
   typeFilter: string | null;
+  searchMode: SearchMode;
 
   // Actions
   setHistory: (history: ClipboardEntry[] | ((prev: ClipboardEntry[]) => ClipboardEntry[])) => void;
@@ -32,6 +35,7 @@ interface HistoryState {
   setHasMore: (hasMore: boolean) => void;
   setCurrentOffset: (offset: number | ((prev: number) => number)) => void;
   setTypeFilter: (filter: string | null) => void;
+  setSearchMode: (mode: SearchMode) => void;
 }
 
 export const useHistoryStore = create<HistoryState>((set) => ({
@@ -49,6 +53,7 @@ export const useHistoryStore = create<HistoryState>((set) => ({
   hasMore: true,
   currentOffset: 0,
   typeFilter: null,
+  searchMode: 'clipboard',
 
   setHistory: (history) => set((state) => ({ 
     history: typeof history === 'function' ? history(state.history) : history 
@@ -74,4 +79,5 @@ export const useHistoryStore = create<HistoryState>((set) => ({
     currentOffset: typeof currentOffset === 'function' ? currentOffset(state.currentOffset) : currentOffset 
   })),
   setTypeFilter: (typeFilter) => set({ typeFilter }),
+  setSearchMode: (searchMode) => set({ searchMode }),
 }));

@@ -9,7 +9,7 @@ use base64::{engine::general_purpose, Engine as _};
 use regex::Regex;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{Emitter, Manager, State};
 use urlencoding::decode;
@@ -29,6 +29,67 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 const RICH_IMAGE_FALLBACK_PREFIX: &str = "<!--WINPASTE_RICH_IMAGE:";
 const RICH_IMAGE_FALLBACK_SUFFIX: &str = "-->";
+
+/// Marker appended by the backend when a list payload truncates long text
+/// (see get_clipboard_history / search_clipboard_history).
+const TRUNCATED_MARKER: &str = "... [Truncated for speed]";
+
+/// Does the list payload already carry this entry's full paste content?
+///
+/// The list intentionally strips multi-MB base64 image payloads (memory) and
+/// truncates text beyond 2000 chars / rich-text html beyond 5000, so those
+/// must be re-fetched by id before pasting. A short plain-text entry already
+/// has its complete content in the frontend — skipping the DB re-fetch keeps
+/// the paste path entirely off the connection mutex in the common case, so
+/// selecting an entry never waits for whatever the database is doing.
+///
+/// False positives (a user's actual text happens to end with the marker)
+/// only cause a harmless extra fetch; false negatives would paste truncated
+/// content, so the check is deliberately conservative: only plain text-ish
+/// types qualify, rich_text always re-fetches (its html_content is separate
+/// and may have been preview-truncated).
+fn list_payload_is_full_content(content_type: &str, content: &str) -> bool {
+    matches!(content_type, "text" | "code" | "url") && !content.ends_with(TRUNCATED_MARKER)
+}
+
+// SVG temp files use a counter suffix so two pastes within the same second
+// can never collide on one path (which would silently overwrite the first
+// SVG). Stale files are cleaned up at startup via cleanup_svg_temp_files().
+static SVG_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Remove leftover winpaste_SVG_* temp files from previous runs. Called at
+/// startup — by then nothing references the old clipboard payloads anymore.
+pub fn cleanup_svg_temp_files() {
+    if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("winpaste_SVG_") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+/// Write file paths to the clipboard as CF_HDROP and record the hash the
+/// monitor will compute, so our own paste is skipped as an echo. The hash
+/// MUST match clipboard/mod.rs — it hashes the joined paths after
+/// `content.trim().replace("\r\n", "\n")`. All paste paths go through here
+/// so the protocol can't drift between branches.
+fn set_clipboard_files_with_self_skip_hash(win_paths: Vec<String>) -> AppResult<()> {
+    let mut hasher = DefaultHasher::new();
+    win_paths.join("\n").trim().hash(&mut hasher);
+    let hdrop_hash = hasher.finish();
+    crate::LAST_APP_SET_HASH.store(hdrop_hash, Ordering::SeqCst);
+    crate::info!("[DEBUG] copy_to_clipboard: SETTING LAST_APP_SET_HASH to {} for {} paths", hdrop_hash, win_paths.len());
+    unsafe {
+        crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(win_paths)
+            .map_err(|e| {
+                crate::info!("[ERROR] set_clipboard_files failed: {}", e);
+                AppError::from(e)
+            })?;
+    }
+    Ok(())
+}
 
 fn split_rich_html_and_image_fallback(html: &str) -> (String, Option<String>) {
     if let Some(start) = html.rfind(RICH_IMAGE_FALLBACK_PREFIX) {
@@ -84,6 +145,34 @@ fn resolve_rich_image_fallback_bytes(payload: &str) -> Option<Vec<u8>> {
     std::fs::read(decoded_path).ok()
 }
 
+/// copy_to_clipboard 的全程互斥守卫：任何返回路径 Drop 时无条件释放。
+struct PasteInFlightGuard;
+impl Drop for PasteInFlightGuard {
+    fn drop(&mut self) {
+        crate::PASTE_IN_FLIGHT_SINCE.store(0, Ordering::Relaxed);
+    }
+}
+
+/// 尝试获取粘贴互斥锁。已在进行中（10 秒内）则拒绝；超过 10 秒视为上一
+/// 次流程异常挂死，抢占重置。
+fn try_acquire_paste_lock() -> Result<PasteInFlightGuard, ()> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    match crate::PASTE_IN_FLIGHT_SINCE.compare_exchange(0, now_ms, Ordering::SeqCst, Ordering::SeqCst) {
+        Ok(_) => Ok(PasteInFlightGuard),
+        Err(prev) => {
+            if now_ms.saturating_sub(prev) > 10_000 {
+                crate::PASTE_IN_FLIGHT_SINCE.store(now_ms, Ordering::SeqCst);
+                Ok(PasteInFlightGuard)
+            } else {
+                Err(())
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn copy_to_clipboard(
     app_handle: tauri::AppHandle,
@@ -99,10 +188,27 @@ pub async fn copy_to_clipboard(
 ) -> AppResult<()> {
     crate::info!("[DEBUG] copy_to_clipboard called: id={}, paste={}, content_type={}, content_len={}", id, paste, content_type, content.len());
 
+    // 全程互斥：粘贴管线未走完时忽略新的粘贴请求（连点/连按 Enter 防抖）。
+    // 拒绝时返回 paste_in_progress，前端静默处理。纯复制（paste=false）不锁。
+    let _paste_guard = if paste {
+        match try_acquire_paste_lock() {
+            Ok(g) => Some(g),
+            Err(_) => {
+                crate::info!("[DEBUG] copy_to_clipboard rejected: paste already in flight (id={})", id);
+                return Err(AppError::Internal("paste_in_progress".to_string()));
+            }
+        }
+    } else {
+        None
+    };
+
     let mut html_content: Option<String> = None;
 
-    // 0. Resolve full content if ID is provided and content is placeholder/truncated
-    if id != 0 {
+    // 0. Resolve full content only when the list payload can't carry it
+    //    (stripped base64 images, truncated long text/html). Short plain
+    //    text is already complete in the frontend — pasting it touches no
+    //    DB at all, so selection is never blocked by database work.
+    if id != 0 && !list_payload_is_full_content(&content_type, &content) {
         if id > 0 {
             // Fetch from Database
             if let Ok(Some((full_content, _ctype, html))) = state.repo.get_entry_content_with_html(id) {
@@ -180,6 +286,8 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
     } else {
         // 在非置顶模式下，直接隐藏窗口
         if let Some(window) = app_handle.get_webview_window("main") {
+            // 鼠标此刻往往还悬停在条目上,预览窗可能正在显示,必须一起隐藏(#54)
+            crate::app::window_manager::hide_compact_preview(app_handle);
             let _ = window.hide();
             crate::IS_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
             crate::app::window_manager::release_win_keys();
@@ -198,20 +306,87 @@ async fn handle_window_focus_for_paste(app_handle: &tauri::AppHandle) -> AppResu
     Ok(())
 }
 
-async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult<()> {
-    let last_hwnd_val = crate::LAST_ACTIVE_HWND.load(Ordering::Relaxed);
-    crate::info!("[DEBUG] restore_focus_before_paste called. Target HWND = {:?}", last_hwnd_val);
-    
-    if last_hwnd_val == 0 {
-        return Err(AppError::Internal("No last active window captured".to_string()));
+/// 焦点恢复的挂起预算。正常情况下整段同步 Win32 调用在毫秒级完成，500ms
+/// 足够覆盖"目标应用正忙但仍会恢复"的常见情形；超过就判定对方线程不响应。
+const FOCUS_RESTORE_BUDGET_MS: u64 = 500;
+
+/// 强制把目标窗口设为前台：虚拟 Alt 绕过 ForegroundLockTimeout → 输入附加 →
+/// SetForegroundWindow → 恢复/置顶 → 解除附加。
+///
+/// ⚠️ **必须在专用线程里调用**（见 `restore_focus_before_paste` 的熔断）：
+/// AttachThreadInput 之后这些调用会对前台/目标线程的输入队列发起同步等待，
+/// 对方线程不抽消息时永久挂起，且无法从外部中断或取消。挂起的后果由调用方的
+/// 超时熔断承担——放弃焦点恢复，而不是让整条粘贴流程陪葬。
+#[cfg(target_os = "windows")]
+unsafe fn force_foreground_sync(fg_raw: usize, target_raw: usize) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP};
+
+    let fg_hwnd = HWND(fg_raw as _);
+    let target_hwnd = HWND(target_raw as _);
+
+    // 1. 发送一次虚拟的 Alt 键按下来绕过 ForegroundLockTimeout 限制
+    keybd_event(windows::Win32::UI::Input::KeyboardAndMouse::VK_MENU.0 as u8, 0, windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0), 0);
+    keybd_event(windows::Win32::UI::Input::KeyboardAndMouse::VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+
+    // 2. 将本线程与前台线程进行输入附加，赋予本线程前台特权
+    let current_thread_id = windows::Win32::System::Threading::GetCurrentThreadId();
+    let fg_thread_id = GetWindowThreadProcessId(fg_hwnd, None);
+    let target_thread_id = GetWindowThreadProcessId(target_hwnd, None);
+
+    let attached_to_fg = if current_thread_id != fg_thread_id && fg_thread_id != 0 {
+        windows::Win32::System::Threading::AttachThreadInput(current_thread_id, fg_thread_id, true).as_bool()
+    } else { false };
+
+    let attached_to_target = if fg_thread_id != target_thread_id && target_thread_id != 0 {
+        windows::Win32::System::Threading::AttachThreadInput(fg_thread_id, target_thread_id, true).as_bool()
+    } else { false };
+
+    let _ = SetForegroundWindow(target_hwnd);
+
+    if IsIconic(target_hwnd).as_bool() {
+        let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(target_hwnd, windows::Win32::UI::WindowsAndMessaging::SW_RESTORE);
     }
+    let _ = windows::Win32::UI::WindowsAndMessaging::BringWindowToTop(target_hwnd);
+
+    if attached_to_target {
+        let _ = windows::Win32::System::Threading::AttachThreadInput(fg_thread_id, target_thread_id, false);
+    }
+    if attached_to_fg {
+        let _ = windows::Win32::System::Threading::AttachThreadInput(current_thread_id, fg_thread_id, false);
+    }
+
+    crate::info!("[DEBUG] Tried to set foreground. Attached to FG: {}, Attached to Target: {}", attached_to_fg, attached_to_target);
+}
+
+async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult<()> {
+    // 候选目标按从新到旧排序：LAST_ACTIVE_HWND 优先，再回退到最近前台快照
+    // 环形队列。旧实现只认单个 HWND，一旦目标窗口已关闭/最小化就直接放弃，
+    // 焦点留在面板上，随后的 Ctrl+V 会发给面板自己 —— 表现为"搜索后第一
+    // 次点击/回车粘贴不上，第二次才成功"（重新唤出面板时 toggle_window 恰好
+    // 把正确的前台补录了进去）。
+    use crate::infrastructure::windows_api::window_tracker;
+    let mut candidates: Vec<usize> = Vec::new();
+    candidates.push(crate::LAST_ACTIVE_HWND.load(Ordering::Relaxed));
+    candidates.extend(window_tracker::recent_foreground_candidates());
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|v| window_tracker::is_valid_paste_target(*v) && seen.insert(*v));
+
+    crate::info!("[DEBUG] restore_focus_before_paste candidates = {:?}", candidates);
+
+    let Some(&target_val) = candidates.first() else {
+        return Err(AppError::Internal("No valid paste target window".to_string()));
+    };
 
     #[cfg(target_os = "windows")]
     {
         use crate::infrastructure::windows_ext::WindowExt;
-        
-        let target_hwnd = HWND(last_hwnd_val as _);
-        unsafe {
+
+        let target_hwnd = HWND(target_val as _);
+        // 跨 .await 的部分一律传 usize：HWND 内含裸指针不是 Send，带着它 await
+        // 会让整个 command future 变成 non-Send，tauri::async_runtime::spawn 直接拒绝。
+        let target_raw = target_hwnd.0 as usize;
+        // unsafe 作用域收到最小：只包这两个无副作用的查询调用。
+        let fg_raw = unsafe {
             if !IsWindowVisible(target_hwnd).as_bool() {
                  crate::info!("[WARN] Target window is no longer visible.");
                  return Err(AppError::Internal("Target window is no longer visible".to_string()));
@@ -219,50 +394,62 @@ async fn restore_focus_before_paste(_app_handle: &tauri::AppHandle) -> AppResult
 
             let fg_hwnd = GetForegroundWindow();
             crate::info!("[DEBUG] Before SetForegroundWindow, Current Foreground is {:?}", fg_hwnd.0 as usize);
-            
-            if fg_hwnd.0 != target_hwnd.0 {
-                use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP};
-                
-                // 1. 发送一次虚拟的 Alt 键按下来绕过 ForegroundLockTimeout 限制
-                keybd_event(windows::Win32::UI::Input::KeyboardAndMouse::VK_MENU.0 as u8, 0, windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0), 0);
-                keybd_event(windows::Win32::UI::Input::KeyboardAndMouse::VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+            fg_hwnd.0 as usize
+        };
 
-                // 2. 将当前 Tokio 后台工作线程与前台线程进行输入附加，赋予当前线程前台特权
-                let current_thread_id = windows::Win32::System::Threading::GetCurrentThreadId();
-                let fg_thread_id = GetWindowThreadProcessId(fg_hwnd, None);
-                let target_thread_id = GetWindowThreadProcessId(target_hwnd, None);
+        if fg_raw != target_raw {
+            // 熔断（#53）：整段同步 Win32 调用交给专用线程，主流程只等
+            // FOCUS_RESTORE_BUDGET_MS。对方线程不响应时挂起的是这条
+            // "牺牲品"线程——它不占 tokio worker，粘贴命令照常返回，
+            // 前端 pasteBusyRef 不会被永久占死，后续点击继续可用。
+            let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let finished_worker = finished.clone();
 
-                let attached_to_fg = if current_thread_id != fg_thread_id && fg_thread_id != 0 {
-                    windows::Win32::System::Threading::AttachThreadInput(current_thread_id, fg_thread_id, true).as_bool()
-                } else { false };
+            let spawned = std::thread::Builder::new()
+                .name("winpaste-focus-restore".to_string())
+                .spawn(move || {
+                    unsafe { force_foreground_sync(fg_raw, target_raw) };
+                    finished_worker.store(true, std::sync::atomic::Ordering::SeqCst);
+                });
 
-                let attached_to_target = if fg_thread_id != target_thread_id && target_thread_id != 0 {
-                    windows::Win32::System::Threading::AttachThreadInput(fg_thread_id, target_thread_id, true).as_bool()
-                } else { false };
-
-                let _ = SetForegroundWindow(target_hwnd);
-                
-                if IsIconic(target_hwnd).as_bool() {
-                    let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(target_hwnd, windows::Win32::UI::WindowsAndMessaging::SW_RESTORE);
+            let finished_in_time = match spawned {
+                Ok(_) => {
+                    let deadline = std::time::Instant::now()
+                        + std::time::Duration::from_millis(FOCUS_RESTORE_BUDGET_MS);
+                    loop {
+                        if finished.load(std::sync::atomic::Ordering::SeqCst) {
+                            break true;
+                        }
+                        if std::time::Instant::now() >= deadline {
+                            break false;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
                 }
-                let _ = windows::Win32::UI::WindowsAndMessaging::BringWindowToTop(target_hwnd);
-                
-                if attached_to_target {
-                    let _ = windows::Win32::System::Threading::AttachThreadInput(fg_thread_id, target_thread_id, false);
+                Err(err) => {
+                    crate::error!("[ERROR] Failed to spawn focus-restore worker: {}", err);
+                    false
                 }
-                if attached_to_fg {
-                    let _ = windows::Win32::System::Threading::AttachThreadInput(current_thread_id, fg_thread_id, false);
-                }
-                
-                crate::info!("[DEBUG] Tried to set foreground. Attached to FG: {}, Attached to Target: {}", attached_to_fg, attached_to_target);
-            } else {
-                crate::info!("[DEBUG] Target window is already the foreground window.");
+            };
+
+            if !finished_in_time {
+                crate::error!(
+                    "[ERROR] Focus restore did not finish within {}ms — target window is not \
+                     responding. Giving up so this paste can still complete; the clipboard is \
+                     already filled, so the user can paste manually with Ctrl+V.",
+                    FOCUS_RESTORE_BUDGET_MS
+                );
+                return Err(AppError::Internal(
+                    "Focus restore timed out (target window not responding)".to_string(),
+                ));
             }
+        } else {
+            crate::info!("[DEBUG] Target window is already the foreground window.");
         }
 
         // Wait for focus with polling instead of blind sleep
-        crate::info!("[DEBUG] Waiting for focus to settle on target window {:?}...", target_hwnd.0 as usize);
-        if !WindowExt::wait_for_focus_raw(target_hwnd.0 as usize, 300).await {
+        crate::info!("[DEBUG] Waiting for focus to settle on target window {:?}...", target_raw);
+        if !WindowExt::wait_for_focus_raw(target_raw, 300).await {
             unsafe {
                 let current_fg = GetForegroundWindow();
                 crate::info!("[WARN] Failed to confirm focus on target window after 300ms. Current Foreground is actually {:?}", current_fg.0 as usize);
@@ -357,40 +544,55 @@ async fn copy_content_to_system_clipboard(
                 }
                 
                 if fallback_to_file {
-                    let win_path = clean_path.replace("/", "\\");
-                    crate::info!("[DEBUG] copy_to_clipboard: fallback_to_file for >1MB image. win_path={}", win_path);
-                    
-                    // We must hash the EXACT string that the monitor will see!
-                    // The monitor will read the backslash path from CF_HDROP.
-                    let mut hasher = DefaultHasher::new();
-                    win_path.hash(&mut hasher);
-                    let hdrop_hash = hasher.finish();
-                    crate::LAST_APP_SET_HASH.store(hdrop_hash, Ordering::SeqCst);
-                    crate::info!("[DEBUG] copy_to_clipboard: SETTING LAST_APP_SET_HASH to {} for path {}", hdrop_hash, win_path);
-
-                    unsafe {
-                        crate::infrastructure::windows_api::win_clipboard::set_clipboard_files(vec![win_path])
-                            .map_err(|e| {
-                                crate::info!("[ERROR] set_clipboard_files failed: {}", e);
-                                AppError::from(e)
-                            })?;
-                    }
+                    // Multi-file selections must be written to CF_HDROP as a
+                    // whole — pasting only the first path would drop the rest.
+                    let win_paths: Vec<String> = content
+                        .lines()
+                        .map(|line| {
+                            let clean = if line.starts_with("file://") {
+                                line.strip_prefix("file://").unwrap_or(line)
+                            } else {
+                                line
+                            };
+                            clean.replace("/", "\\")
+                        })
+                        .collect();
+                    crate::info!("[DEBUG] copy_to_clipboard: fallback_to_file for paths={}", win_paths.len());
+                    set_clipboard_files_with_self_skip_hash(win_paths)?;
                 }
             } else if content_type == "image" {
-                let b64_data = if content.starts_with("data:image") {
-                    content.split(',').nth(1).unwrap_or(content)
+                // SVG is a vector text format that the rasterizer can't
+                // convert to PNG — paste it back as a .svg file instead.
+                if content.starts_with("data:image/svg") {
+                    let b64_data = content.split(',').nth(1).unwrap_or(content);
+                    let bytes = general_purpose::STANDARD
+                        .decode(b64_data)
+                        .map_err(|e| AppError::Internal(format!("Base64 解码失败: {}", e)))?;
+                    let temp_path = std::env::temp_dir().join(format!(
+                        "winpaste_SVG_{}_{}.svg",
+                        current_time,
+                        SVG_TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
+                    ));
+                    std::fs::write(&temp_path, &bytes)
+                        .map_err(|e| AppError::IO(format!("写入临时 SVG 失败: {}", e)))?;
+                    let win_path = temp_path.to_string_lossy().replace("/", "\\");
+                    set_clipboard_files_with_self_skip_hash(vec![win_path])?;
                 } else {
-                    content
-                };
+                    let b64_data = if content.starts_with("data:image") {
+                        content.split(',').nth(1).unwrap_or(content)
+                    } else {
+                        content
+                    };
 
-                let bytes = general_purpose::STANDARD
-                    .decode(b64_data)
-                    .map_err(|e| AppError::Internal(format!("Base64 解码失败: {}", e)))?;
-                
-                let (primary_hash, _secondary_hash) = copy_image_bytes_to_clipboard(bytes, current_time)?;
-                // Keep LAST_APP_SET_HASH as content_hash (dataurl hash)
-                // Store pixel/byte hash in HASH_ALT
-                crate::LAST_APP_SET_HASH_ALT.store(primary_hash, Ordering::SeqCst);
+                    let bytes = general_purpose::STANDARD
+                        .decode(b64_data)
+                        .map_err(|e| AppError::Internal(format!("Base64 解码失败: {}", e)))?;
+
+                    let (primary_hash, _secondary_hash) = copy_image_bytes_to_clipboard(bytes, current_time)?;
+                    // Keep LAST_APP_SET_HASH as content_hash (dataurl hash)
+                    // Store pixel/byte hash in HASH_ALT
+                    crate::LAST_APP_SET_HASH_ALT.store(primary_hash, Ordering::SeqCst);
+                }
             } else {
                 let mut clipboard = arboard::Clipboard::new().map_err(AppError::from)?;
                 clipboard.set_text(content.to_string()).map_err(AppError::from)?;
@@ -521,12 +723,33 @@ fn copy_image_bytes_to_clipboard(
     // Check if it's a GIF by magic number
     let is_gif = bytes.len() > 3 && &bytes[0..3] == b"GIF";
 
+    // Decode ONCE — the same decoded image feeds both the PNG payload and the
+    // pixel hash. Previously the bytes were decoded twice, which made large
+    // images slow to paste.
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| AppError::Internal(format!("加载图像失败: {}", e)))?;
+
+    // Prepare PNG data for better compatibility. Encoded first so the output
+    // keeps the source color mode — byte-for-byte identical to before.
+    // Fast PNG encoding — default compression made large screenshots delay
+    // capture (same fix as clipboard/mod.rs).
+    let mut png_buf: Vec<u8> = Vec::new();
+    {
+        use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+        let mut cursor = std::io::Cursor::new(&mut png_buf);
+        let encoder = PngEncoder::new_with_quality(
+            &mut cursor,
+            CompressionType::Fast,
+            FilterType::NoFilter,
+        );
+        img.write_with_encoder(encoder)
+            .map_err(|e| AppError::Internal(format!("编码 PNG 失败: {}", e)))?;
+    }
+
     let (width, height, raw_bytes) = {
-        let img = image::load_from_memory(&bytes)
-            .map_err(|e| AppError::Internal(format!("加载图像失败: {}", e)))?
-            .to_rgba8();
-        let (w, h) = img.dimensions();
-        (w, h, img.into_raw())
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        (w, h, rgba.into_raw())
     };
 
     crate::LAST_APP_SET_TIMESTAMP.store(current_time, Ordering::SeqCst);
@@ -552,13 +775,6 @@ fn copy_image_bytes_to_clipboard(
         let byte_hash = hasher.finish();
         (byte_hash, 0)
     };
-
-    // Prepare PNG data for better compatibility
-    let mut png_buf: Vec<u8> = Vec::new();
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| AppError::Internal(format!("加载图像失败: {}", e)))?;
-    img.write_to(&mut std::io::Cursor::new(&mut png_buf), image::ImageFormat::Png)
-        .map_err(|e| AppError::Internal(format!("编码 PNG 失败: {}", e)))?;
 
     let gif_temp_path = unsafe {
         crate::infrastructure::windows_api::win_clipboard::set_clipboard_image_with_formats(
@@ -643,6 +859,22 @@ async fn perform_paste_action(
     if stole_focus {
         crate::info!("[WARN] Clipboard window STOLE focus back, attempting one last restore...");
         let _ = restore_focus_before_paste(app_handle).await;
+
+        // 二次确认：如果焦点仍在自己窗口上（目标窗口全部失效时会发生），
+        // 绝不把 Ctrl+V 发给自己 —— 那会粘贴进面板的搜索框。此时剪贴板
+        // 已就绪，用户可手动粘贴；返回错误让前端弹提示。
+        #[cfg(target_os = "windows")]
+        unsafe {
+            let fg = GetForegroundWindow();
+            if let Some(window) = app_handle.get_webview_window("main") {
+                if let Ok(hwnd_raw) = window.hwnd() {
+                    if fg.0 == hwnd_raw.0 {
+                        crate::info!("[WARN] Foreground is still our own window after restore; skipping paste keystroke.");
+                        return Err(AppError::Internal("Paste target window is not available".to_string()));
+                    }
+                }
+            }
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -651,8 +883,15 @@ async fn perform_paste_action(
         crate::info!("[DEBUG] Right before sending paste keystroke, Foreground Window is {:?}", fg_before_paste.0 as usize);
     }
 
-    // Get paste method from settings
-    let paste_method = state.settings_repo.get("app.paste_method").ok().flatten().unwrap_or_else(|| "shift_insert".to_string());
+    // Read the paste method from the in-memory settings cache: touching the
+    // DB here used to stall the keystroke for seconds while a search held the
+    // connection mutex (panel already hidden → paste appeared to do nothing).
+    let paste_method = app_handle
+        .state::<SettingsState>()
+        .paste_method
+        .lock()
+        .unwrap()
+        .clone();
 
     // Send paste keystroke
     crate::info!("[DEBUG] Calling send_paste_keystroke...");
@@ -678,6 +917,8 @@ async fn hide_window_after_paste(app_handle: &tauri::AppHandle) {
     }
 
     if let Some(window) = app_handle.get_webview_window("main") {
+        // 粘贴后隐藏主面板时,悬停预览窗一起隐藏,避免残留桌面(#54)
+        crate::app::window_manager::hide_compact_preview(app_handle);
         let _ = window.set_focusable(false);
         let _ = window.hide();
         let _ = app_handle.emit("window-hidden", ());
@@ -711,7 +952,13 @@ pub fn send_paste_keystroke(method: &str, content: Option<&str>, content_type: O
 
         let can_type =
             matches!(content_type, Some("text" | "code" | "url" | "rich_text"));
-        let effective_method = if method == "game_mode" && !can_type {
+        // Images/videos are always pasted with Ctrl+V: Shift+Insert is
+        // unreliable in chat/graphics apps for bitmap clipboard content.
+        // Files keep the user's setting (Shift+Insert is often the only way
+        // to paste file paths into old terminals like CMD).
+        let effective_method = if matches!(content_type, Some("image" | "video")) {
+            "ctrl_v"
+        } else if method == "game_mode" && !can_type {
             "ctrl_v"
         } else {
             method
@@ -1061,7 +1308,7 @@ pub fn paste_latest_rich(app_handle: tauri::AppHandle) {
             1,
             0,  // offset
             None,
-        );
+        ).await;
 
         if let Ok(items) = history {
             if let Some(item) = items.first() {
@@ -1080,4 +1327,37 @@ pub fn paste_latest_rich(app_handle: tauri::AppHandle) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_payload_is_full_content;
+
+    #[test]
+    fn list_payload_full_content_rules() {
+        // Short plain text: complete in the list, paste skips the DB entirely.
+        assert!(list_payload_is_full_content("text", "hello"));
+        assert!(list_payload_is_full_content("code", "fn main() {}"));
+        assert!(list_payload_is_full_content("url", "https://example.com"));
+
+        // Truncated long text: must re-fetch the full content by id.
+        assert!(!list_payload_is_full_content(
+            "text",
+            "aaaa... [Truncated for speed]"
+        ));
+
+        // rich_text always re-fetches: html_content may be preview-truncated.
+        assert!(!list_payload_is_full_content("rich_text", "short"));
+
+        // Images: list strips base64 payloads (empty content) -> re-fetch.
+        assert!(!list_payload_is_full_content("image", ""));
+        assert!(!list_payload_is_full_content("image", "data:image/png;base64,xx"));
+
+        // A false positive (real text ending with the marker) only costs a
+        // harmless extra fetch — never a truncated paste.
+        assert!(!list_payload_is_full_content(
+            "text",
+            "my notes... [Truncated for speed]"
+        ));
+    }
 }

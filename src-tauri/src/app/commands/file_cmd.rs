@@ -1,5 +1,4 @@
 use crate::error::{AppResult, AppError};
-use std::path::Path;
 use serde::Serialize;
 use image::ImageFormat;
 
@@ -18,27 +17,30 @@ pub fn get_file_size(path: String) -> AppResult<FileSize> {
 }
 
 #[tauri::command]
-pub async fn save_file_copy(source_path: String, target_path: String) -> AppResult<()> {
-    std::fs::copy(source_path, target_path).map_err(AppError::from)?;
-    Ok(())
-}
+pub fn check_external_file_exists(content: String) -> bool {
+    let first_file = content.lines().next().unwrap_or(&content).trim();
+    let raw_path = if first_file.starts_with("file://") {
+        first_file.strip_prefix("file://").unwrap_or(first_file)
+    } else {
+        first_file
+    };
+    let raw_path = if raw_path.starts_with('/') && raw_path.chars().nth(2) == Some(':') {
+        &raw_path[1..]
+    } else {
+        raw_path
+    };
 
-fn normalize_image_ext(ext: &str) -> Option<&'static str> {
-    match ext.to_lowercase().as_str() {
-        "png" => Some("png"),
-        "jpg" | "jpeg" => Some("jpg"),
-        "webp" => Some("webp"),
-        "gif" => Some("gif"),
-        _ => None,
+    let decoded = urlencoding::decode(raw_path).ok();
+    match decoded {
+        Some(path) => std::path::Path::new(path.as_ref()).exists(),
+        None => std::path::Path::new(raw_path).exists(),
     }
 }
 
-pub(crate) fn image_ext_from_filename(name: &str) -> Option<&'static str> {
-    let ext = Path::new(name)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    normalize_image_ext(ext)
+#[tauri::command]
+pub async fn save_file_copy(source_path: String, target_path: String) -> AppResult<()> {
+    std::fs::copy(source_path, target_path).map_err(AppError::from)?;
+    Ok(())
 }
 
 pub(crate) fn image_ext_from_bytes(bytes: &[u8]) -> Option<&'static str> {
@@ -50,32 +52,4 @@ pub(crate) fn image_ext_from_bytes(bytes: &[u8]) -> Option<&'static str> {
         ImageFormat::WebP => Some("webp"),
         _ => None,
     }
-}
-
-pub(crate) fn image_ext_from_mime(mime: &str) -> Option<&'static str> {
-    match mime {
-        "image/gif" => Some("gif"),
-        "image/webp" => Some("webp"),
-        "image/jpeg" => Some("jpg"),
-        "image/png" => Some("png"),
-        _ => None,
-    }
-}
-
-fn image_ext_from_url(url: &reqwest::Url) -> Option<&'static str> {
-    let path = url.path();
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    normalize_image_ext(ext)
-}
-
-pub(crate) fn read_file_as_base64(path: &Path) -> AppResult<String> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(AppError::from)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).map_err(AppError::from)?;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    Ok(STANDARD.encode(&buffer))
 }

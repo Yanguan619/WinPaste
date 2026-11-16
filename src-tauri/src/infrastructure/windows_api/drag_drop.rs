@@ -520,18 +520,18 @@ impl IDropTarget_Impl for EmojiDropTarget_Impl {
             if !virtual_files.is_empty() {
                 let app_handle = self.app_handle.as_ref().clone();
                 std::thread::spawn(move || {
-                    let mut saved = Vec::new();
-                    for (name, bytes) in virtual_files {
-                        if let Some(path) =
-                            EmojiDropTarget::save_temp_bytes(Some(name.as_str()), &bytes)
-                        {
-                            saved.push(path);
+                        let mut saved = Vec::new();
+                        for (name, bytes) in virtual_files {
+                            if let Some(path) =
+                                EmojiDropTarget::save_temp_bytes(Some(name.as_str()), &bytes)
+                            {
+                                saved.push(path);
+                            }
                         }
-                    }
-                    if !saved.is_empty() {
-                        EmojiDropTarget::emit_file_drop(&app_handle, saved);
-                    }
-                });
+                        if !saved.is_empty() {
+                            EmojiDropTarget::emit_file_drop(&app_handle, saved);
+                        }
+                    });
             } else if let Some(url) = unsafe { EmojiDropTarget::read_inet_url(data_obj) } {
                 let app_handle = self.app_handle.as_ref().clone();
                 tauri::async_runtime::spawn(async move {

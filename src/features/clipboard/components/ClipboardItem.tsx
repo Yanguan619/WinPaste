@@ -1,8 +1,7 @@
 import { useRef, useEffect, useState, useMemo, memo } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { currentMonitor, getCurrentWindow, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+import { compactPreviewController } from "../lib/compactPreviewController";
+import type { CompactPreviewAnchor } from "../lib/compactPreviewController";
 import {
     Pin,
     PinOff,
@@ -36,24 +35,15 @@ import { toTauriLocalImageSrc } from "../../../shared/lib/localImageSrc";
 import { getRichTextSnapshotDataUrl } from "../../../shared/lib/richTextSnapshot";
 import { getFileIcon as getFileIconDataUrl, peekFileIcon } from "../../../shared/lib/fileIcon";
 import { getSourceAppIcon, peekSourceAppIcon } from "../../../shared/lib/sourceAppIcon";
+import { peekRecentThumb } from "../../../shared/lib/thumbnailCache";
 import { useSettingsStore } from "../../../shared/store/settingsStore";
 import { useHistoryStore } from "../../../shared/store/historyStore";
+import { useUIStore } from "../../../shared/store/uiStore";
 
-const COMPACT_PREVIEW_LABEL = "compact-preview";
 const RICH_IMAGE_FALLBACK_PREFIX = "<!--WINPASTE_RICH_IMAGE:";
 const RICH_IMAGE_FALLBACK_SUFFIX = "-->";
-const COMPACT_PREVIEW_DEBUG = false;
-const compactPreviewLog = (...args: unknown[]) => {
-    if (!COMPACT_PREVIEW_DEBUG) return;
-    const ts = new Date().toISOString();
-    console.log(`[CompactPreview][Main][${ts}]`, ...args);
-};
-type CompactPreviewAnchor = {
-    clientX: number;
-    clientY: number;
-    screenX: number;
-    screenY: number;
-};
+const EXTERNAL_CHECK_TTL_MS = 10_000;
+const externalCheckCache = new Map<number, number>();
 
 const extractRichImageFallback = (html?: string): { cleanHtml?: string; imagePayload?: string } => {
     if (!html) return {};
@@ -82,167 +72,6 @@ const resolveRichImageSrc = (payload?: string): string | null => {
     return toTauriLocalImageSrc(value);
 };
 
-let compactPreviewWindow: WebviewWindow | null = null;
-let compactPreviewCreating = false;
-let compactPreviewReady: Promise<WebviewWindow | null> | null = null;
-let compactPreviewMounted = false;
-let compactPreviewMountedPromise: Promise<boolean> | null = null;
-let compactPreviewResizeListener: Promise<() => void> | null = null;
-let compactPreviewPendingShow = false;
-let compactPreviewPendingAnchor: CompactPreviewAnchor | null = null;
-let compactPreviewPendingTimer: ReturnType<typeof setTimeout> | null = null;
-let compactPreviewLifecycleListenersReady: Promise<void> | null = null;
-let compactPreviewGen = 0; // 每次隐藏时递增，展示前校验避免竞态
-
-const loadWebviewWindowModule = async () => import("@tauri-apps/api/webviewWindow");
-
-const setIgnoreBlurSafe = (ignore: boolean) => {
-    compactPreviewLog("set_ignore_blur", { ignore });
-    invoke("set_ignore_blur", { ignore }).catch(() => {});
-};
-
-const clearCompactPreviewPendingState = () => {
-    compactPreviewLog("clear pending state");
-    if (compactPreviewPendingTimer) clearTimeout(compactPreviewPendingTimer);
-    compactPreviewPendingTimer = null;
-    compactPreviewPendingShow = false;
-    compactPreviewPendingAnchor = null;
-};
-
-const resolveAnchorPhysical = async (
-    anchor: CompactPreviewAnchor,
-    scale: number
-): Promise<{ x: number; y: number }> => {
-    try {
-        const appWindow = getCurrentWindow();
-        const outer = await appWindow.outerPosition();
-        return {
-            x: Math.round(outer.x + anchor.clientX * scale),
-            y: Math.round(outer.y + anchor.clientY * scale)
-        };
-    } catch {
-        return {
-            x: Math.round(anchor.screenX * scale),
-            y: Math.round(anchor.screenY * scale)
-        };
-    }
-};
-
-const pickPreviewPosition = (
-    anchorX: number,
-    anchorY: number,
-    widthPx: number,
-    heightPx: number,
-    monitorPos: { x: number; y: number },
-    monitorSize: { width: number; height: number },
-    margin: number,
-    offset: number,
-    avoidRect?: { left: number; top: number; right: number; bottom: number } | null
-) => {
-    const left = monitorPos.x + margin;
-    const top = monitorPos.y + margin;
-    const right = monitorPos.x + monitorSize.width - margin;
-    const bottom = monitorPos.y + monitorSize.height - margin;
-
-    const clampPoint = (p: { x: number; y: number }) => ({
-        x: Math.min(Math.max(p.x, left), right - widthPx),
-        y: Math.min(Math.max(p.y, top), bottom - heightPx)
-    });
-
-    const intersectsAvoidRect = (p: { x: number; y: number }) => {
-        if (!avoidRect) return false;
-        const previewRect = { left: p.x, top: p.y, right: p.x + widthPx, bottom: p.y + heightPx };
-        return !(previewRect.right <= avoidRect.left || previewRect.left >= avoidRect.right || previewRect.bottom <= avoidRect.top || previewRect.top >= avoidRect.bottom);
-    };
-
-    const candidates = [
-        { x: anchorX + offset, y: anchorY + offset },
-        { x: anchorX + offset, y: anchorY - heightPx - offset },
-        { x: anchorX - widthPx - offset, y: anchorY + offset },
-        { x: anchorX - widthPx - offset, y: anchorY - heightPx - offset }
-    ];
-
-    const fits = (p: { x: number; y: number }) => p.x >= left && p.y >= top && p.x + widthPx <= right && p.y + heightPx <= bottom;
-
-    for (const c of candidates) {
-        if (fits(c) && !intersectsAvoidRect(c)) return c;
-    }
-
-    if (avoidRect) {
-        const outsideCandidates = [
-            { x: avoidRect.right + offset, y: anchorY - Math.round(heightPx * 0.25) },
-            { x: avoidRect.left - widthPx - offset, y: anchorY - Math.round(heightPx * 0.25) },
-            { x: anchorX - Math.round(widthPx * 0.2), y: avoidRect.top - heightPx - offset },
-            { x: anchorX - Math.round(widthPx * 0.2), y: avoidRect.bottom + offset }
-        ].map(clampPoint);
-        for (const c of outsideCandidates) {
-            if (!intersectsAvoidRect(c)) return c;
-        }
-    }
-
-    for (const c of candidates) {
-        const clamped = clampPoint(c);
-        if (!intersectsAvoidRect(clamped)) return clamped;
-    }
-
-    return clampPoint(candidates[0]);
-};
-
-const placeAndShowPendingCompactPreview = async (
-    widthLogical: number,
-    heightLogical: number,
-    options?: { keepPending?: boolean }
-) => {
-    if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) return;
-    const gen = compactPreviewGen;
-
-    const appWindow = getCurrentWindow();
-    const scale = await appWindow.scaleFactor();
-    const monitor = await currentMonitor();
-    const monitorPos = monitor?.position || { x: 0, y: 0 };
-    const monitorSize = monitor?.size || { width: 1920, height: 1080 };
-    const margin = Math.round(10 * scale);
-    const offset = Math.round(12 * scale);
-
-    const widthPx = Math.round(widthLogical * scale);
-    const heightPx = Math.round(heightLogical * scale);
-    const anchorPx = await resolveAnchorPhysical(compactPreviewPendingAnchor, scale);
-    const mainOuter = await appWindow.outerPosition().catch(() => null);
-    const mainSize = await appWindow.outerSize().catch(() => null);
-    const avoidRect = mainOuter && mainSize ? { left: mainOuter.x, top: mainOuter.y, right: mainOuter.x + mainSize.width, bottom: mainOuter.y + mainSize.height } : null;
-
-    // 经过多个 await 后，面板可能已经关闭了。检查 gen 避免竞态：
-    // 如果 hideCompactPreviewGlobal 在 await 期间被调用, gen 会递增, 此时应放弃展示。
-    if (gen !== compactPreviewGen || !compactPreviewWindow) return;
-
-    const target = pickPreviewPosition(anchorPx.x, anchorPx.y, widthPx, heightPx, monitorPos, monitorSize, margin, offset, avoidRect);
-
-    setIgnoreBlurSafe(true);
-    try {
-        await compactPreviewWindow.setPosition(new PhysicalPosition(target.x, target.y));
-        // 再次检查 gen，setPosition 期间也可能被关闭
-        if (gen !== compactPreviewGen || !compactPreviewWindow) { setIgnoreBlurSafe(false); return; }
-        await compactPreviewWindow.show();
-        try { await compactPreviewWindow.setAlwaysOnTop(false); await compactPreviewWindow.setAlwaysOnTop(true); } catch {}
-    } catch (err) {
-        setIgnoreBlurSafe(false);
-        throw err;
-    }
-    if (!options?.keepPending) clearCompactPreviewPendingState();
-};
-
-const hideCompactPreviewGlobal = async () => {
-    compactPreviewGen++;
-    const previewWindow = compactPreviewWindow;
-    compactPreviewWindow = null;
-    compactPreviewMounted = false;
-    compactPreviewMountedPromise = null;
-    clearCompactPreviewPendingState();
-    setIgnoreBlurSafe(false);
-    if (!previewWindow) return;
-    try { await previewWindow.hide(); } catch { /* 窗口可能已被销毁, 忽略 */ }
-};
-
 const seekVideoPreviewFrame = (video: HTMLVideoElement | null) => {
     if (!video) return;
     const duration = video.duration;
@@ -254,91 +83,6 @@ const seekVideoPreviewFrame = (video: HTMLVideoElement | null) => {
     if (target <= 0) return;
     try { video.currentTime = target; } catch {}
 };
-
-const waitForCompactPreviewMounted = async (): Promise<boolean> => {
-    if (compactPreviewMounted) return true;
-    if (!compactPreviewMountedPromise) {
-        compactPreviewMountedPromise = new Promise(async (resolve) => {
-            const timeout = setTimeout(() => resolve(false), 1200);
-            try {
-                const unlisten = await listen("compact-preview-mounted", () => {
-                    compactPreviewMounted = true;
-                    clearTimeout(timeout);
-                    unlisten();
-                    resolve(true);
-                });
-            } catch (err) { clearTimeout(timeout); resolve(false); }
-        });
-    }
-    return compactPreviewMountedPromise;
-};
-
-const ensureCompactPreviewResizeListener = async (): Promise<void> => {
-    if (compactPreviewResizeListener) { await compactPreviewResizeListener; return; }
-    compactPreviewResizeListener = listen<{ width: number; height: number }>("compact-preview-resize", async (event) => {
-        const { width, height } = event.payload || {};
-        if (!width || !height) return;
-        try { await placeAndShowPendingCompactPreview(width, height); } catch (err) {}
-    });
-    await compactPreviewResizeListener;
-};
-
-const ensureCompactPreviewLifecycleListeners = async (): Promise<void> => {
-    if (compactPreviewLifecycleListenersReady) { await compactPreviewLifecycleListenersReady; return; }
-    compactPreviewLifecycleListenersReady = (async () => {
-        const lifecycleEvents = ["tauri://hide", "tauri://close-requested", "tauri://destroyed", "window-hidden"];
-        await Promise.all(lifecycleEvents.map(async (eventName) => {
-            try { await listen(eventName, () => { void hideCompactPreviewGlobal(); }); } catch (err) {}
-        }));
-    })();
-    await compactPreviewLifecycleListenersReady;
-};
-
-const tryReuseExistingCompactPreviewWindow = async (): Promise<WebviewWindow | null> => {
-    try {
-        const { WebviewWindow } = await loadWebviewWindowModule();
-        const existing = await WebviewWindow.getByLabel(COMPACT_PREVIEW_LABEL);
-        if (!existing) return null;
-        compactPreviewWindow = existing;
-        compactPreviewMounted = true;
-        compactPreviewMountedPromise = Promise.resolve(true);
-        try { await existing.setIgnoreCursorEvents(true); } catch {}
-        try { await existing.setAlwaysOnTop(true); } catch {}
-        return existing;
-    } catch (err) { return null; }
-};
-
-const ensureCompactPreviewWindow = async (): Promise<WebviewWindow | null> => {
-    if (compactPreviewWindow) { compactPreviewMounted = true; compactPreviewMountedPromise = Promise.resolve(true); return compactPreviewWindow; }
-    if (compactPreviewReady) return compactPreviewReady;
-    if (compactPreviewCreating) return null;
-    const reusedBeforeCreate = await tryReuseExistingCompactPreviewWindow();
-    if (reusedBeforeCreate) return reusedBeforeCreate;
-    compactPreviewCreating = true;
-    compactPreviewReady = (async () => {
-        try {
-            const { WebviewWindow } = await loadWebviewWindowModule();
-            const previewWindow = new WebviewWindow(COMPACT_PREVIEW_LABEL, {
-                url: "index.html?window=compact-preview",
-                decorations: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, visible: false, focus: false, focusable: false, shadow: false
-            });
-            compactPreviewMounted = false;
-            compactPreviewMountedPromise = null;
-            const created = await new Promise<boolean>((resolve) => {
-                const timeout = setTimeout(() => resolve(false), 1500);
-                previewWindow.once("tauri://created", () => { clearTimeout(timeout); resolve(true); });
-                previewWindow.once("tauri://error", () => { clearTimeout(timeout); resolve(false); });
-            });
-            if (!created) { const reusedAfterFailedCreate = await tryReuseExistingCompactPreviewWindow(); if (reusedAfterFailedCreate) return reusedAfterFailedCreate; return null; }
-            try { await previewWindow.setSize(new PhysicalSize(1, 1)); } catch {}
-            try { await previewWindow.setIgnoreCursorEvents(true); } catch {}
-            compactPreviewWindow = previewWindow;
-            return previewWindow;
-        } catch (err) { return null; } finally { compactPreviewCreating = false; compactPreviewReady = null; }
-    })();
-    return compactPreviewReady;
-};
-
 const getIcon = (type: string) => {
     switch (type) {
         case "text": return <FileText size={14} />;
@@ -385,10 +129,12 @@ const ClipboardItem = ({
     dragControls,
     id,
     disableLayout,
-    t
+    t,
+    onExternalMissing
 }: ClipboardItemProps & { t: (key: string) => string }) => {
-    const { language, richTextSnapshotPreview, showSourceAppIcon, compactMode, privacyProtection, autoHideTags, colorMode } = useSettingsStore();
+    const { language, richTextSnapshotPreview, showSourceAppIcon, compactMode, privacyProtection, autoHideTags, colorMode, clipboardItemFontSize, clipboardTagFontSize } = useSettingsStore();
     const { tagInput, revealedIds, editingTagsId } = useHistoryStore();
+    const windowShowTick = useUIStore((s) => s.windowShowTick);
     const isSelected = useHistoryStore(s => s.isKeyboardMode && index === s.selectedIndex);
 
     const isSensitiveHidden = privacyProtection && (item.tags?.includes('sensitive') || item.tags?.includes('密码') || item.tags?.includes('password')) && !revealedIds.has(item.id);
@@ -400,8 +146,16 @@ const ClipboardItem = ({
     const [snapshotFailed, setSnapshotFailed] = useState(false);
     const [richImageFallbackFailed, setRichImageFallbackFailed] = useState(false);
     const [sourceAppIcon, setSourceAppIcon] = useState<string | null>(() => peekSourceAppIcon(item.source_app_path) ?? null);
+    const itemRef = useRef<HTMLDivElement | null>(null);
     
     const filePaths = useMemo(() => item.content_type === "file" ? item.content.split('\n').filter(path => path.trim()) : [], [item.content, item.content_type]);
+    // Image-file thumbnails for multi-file selections: when every selected
+    // file is an image we render a thumbnail strip instead of the plain
+    // "N items" card.
+    // Keep in sync with the Rust-side image extension list (clipboard/mod.rs
+    // and pipeline.rs): both now treat .svg as an image, .avif stays a plain file.
+    const fileImagePaths = useMemo(() => item.content_type === "file" ? filePaths.filter(p => /\.(png|jpe?g|jfif|gif|bmp|webp|svg)$/i.test(p)) : [], [item.content_type, filePaths]);
+    const allFilesAreImages = filePaths.length > 1 && fileImagePaths.length === filePaths.length;
     const singleFilePath = filePaths.length === 1 ? filePaths[0] : null;
     const [fileIcon, setFileIcon] = useState<string | null>(() => peekFileIcon(singleFilePath) ?? null);
     const isComposing = useRef(false);
@@ -414,7 +168,9 @@ const ClipboardItem = ({
     const richTextCleanHtml = richTextFallback?.cleanHtml || item.html_content || "";
     const richTextSnapshotDisplayMaxHeight = compactMode ? 40 : 64;
     const richTextSnapshotRenderMaxHeight = compactMode ? 100 : 200;
-    const canShowCompactPreview = compactMode && item.content_type !== "file";
+    const canShowCompactPreview = compactMode
+        && item.content_type !== "file"
+        && !(item.is_external && item.file_preview_exists === false);
     
     const richTextSnapshotSrc = useMemo(() => {
         if (!richTextSnapshotPreview || item.content_type !== "rich_text" || !item.html_content || !richTextCleanHtml) return null;
@@ -448,16 +204,65 @@ const ClipboardItem = ({
         return () => { cancelled = true; };
     }, [item.content_type, item.file_preview_exists, singleFilePath]);
 
+    // 预览窗是全局单例:带上归属 id,别让其他条目的 unmount/leave 误关本条目正在展示的预览
+    const previewOwner = String(item.id);
+
     const showCompactPreview = async (anchor: CompactPreviewAnchor) => {
-        let previewWindow = await ensureCompactPreviewWindow();
-        if (!previewWindow) return;
-        await ensureCompactPreviewLifecycleListeners(); await ensureCompactPreviewResizeListener(); await waitForCompactPreviewMounted();
+        if (item.is_external && item.file_preview_exists === false) return;
+        if (isSensitiveHidden) {
+            // 隐私保护开启且条目未解锁时,不要把内容(文本/图片/富文本)送到预览窗,
+            // 否则紧凑模式下鼠标悬停就等于直接暴露明文。
+            try {
+                await compactPreviewController.show(anchor, {
+                    contentType: item.content_type,
+                    content: "",
+                    preview: "",
+                    sourceApp: item.source_app,
+                    timestamp: item.timestamp,
+                    language,
+                    theme: "fluent",
+                    colorMode: colorMode === "light" ? "light" : "dark",
+                    richTextSnapshotPreview: false,
+                    clipboardItemFontSize,
+                    clipboardTagFontSize,
+                    masked: true
+                }, previewOwner);
+            } catch (err) {
+                console.error("Failed to show masked compact preview:", err);
+            }
+            return;
+        }
         try {
-            compactPreviewPendingShow = true; compactPreviewPendingAnchor = anchor;
-            await previewWindow.emit("compact-preview-update", { contentType: item.content_type, content: item.content, preview: item.preview, htmlContent: item.html_content, sourceApp: item.source_app, timestamp: item.timestamp, language, theme: "fluent", colorMode, richTextSnapshotPreview });
-            if (compactPreviewPendingTimer) clearTimeout(compactPreviewPendingTimer);
-            compactPreviewPendingTimer = setTimeout(async () => { if (!compactPreviewPendingShow || !compactPreviewWindow || !compactPreviewPendingAnchor) return; try { await placeAndShowPendingCompactPreview(320, 220, { keepPending: true }); } catch (err) {} }, 50);
-        } catch (err) { compactPreviewWindow = null; compactPreviewMounted = false; compactPreviewMountedPromise = null; }
+            let content = item.content;
+            if (item.content_type === "image") {
+                // Large images are resized server-side (and cached per session):
+                // shipping a multi-MB base64 over IPC — twice, invoke + preview
+                // event — and decoding the full-size image in the preview webview
+                // is what made hover on big screenshots feel slow. Small content
+                // passes through unchanged (keeps GIF animation). Any failure
+                // falls back to the original src.
+                const previewSrc = await invoke<string>("get_hover_preview_image", { id: item.id }).catch(() => "");
+                content = previewSrc || item.content || await invoke<string>("get_clipboard_content", { id: item.id }).catch(() => "");
+            } else if (!content) {
+                content = await invoke<string>("get_clipboard_content", { id: item.id }).catch(() => "");
+            }
+            await compactPreviewController.show(anchor, {
+                contentType: item.content_type,
+                content,
+                preview: item.preview,
+                htmlContent: item.html_content,
+                sourceApp: item.source_app,
+                timestamp: item.timestamp,
+                language,
+                theme: "fluent",
+                colorMode: colorMode === "light" ? "light" : "dark",
+                richTextSnapshotPreview,
+                clipboardItemFontSize,
+                clipboardTagFontSize
+            }, previewOwner);
+        } catch (err) {
+            console.error("Failed to show compact preview:", err);
+        }
     };
 
     useEffect(() => { setLocalTagInput(tagInput); }, [tagInput]);
@@ -470,19 +275,105 @@ const ClipboardItem = ({
     }, [useSnapshotPreviewImage, effectiveRichTextSnapshotSrc, item.id]);
 
     useEffect(() => { if (isEditingTags && tagInputRef.current) tagInputRef.current.focus(); }, [isEditingTags]);
-    useEffect(() => { if (!canShowCompactPreview) void hideCompactPreviewGlobal(); }, [canShowCompactPreview]);
-    useEffect(() => { return () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void hideCompactPreviewGlobal(); }; }, []);
+    useEffect(() => { if (!canShowCompactPreview) void compactPreviewController.hide(previewOwner); }, [canShowCompactPreview, previewOwner]);
+    useEffect(() => { return () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void compactPreviewController.hide(previewOwner); }; }, [previewOwner]);
+
+    useEffect(() => {
+        if (!item.is_external || item.file_preview_exists === false || !onExternalMissing) return;
+        const el = itemRef.current;
+        if (!el) return;
+
+        const runCheck = () => {
+            if (externalCheckCache.size > 2000) externalCheckCache.clear();
+            const now = Date.now();
+            const lastCheck = externalCheckCache.get(item.id) || 0;
+            if (now - lastCheck < EXTERNAL_CHECK_TTL_MS) return;
+            externalCheckCache.set(item.id, now);
+
+            invoke<boolean>("check_external_file_exists", { content: item.content })
+                .then((exists) => {
+                    if (!exists) onExternalMissing(item.id);
+                })
+                .catch(() => {});
+        };
+
+        let observer: IntersectionObserver | null = null;
+        if (typeof IntersectionObserver !== "undefined") {
+            observer = new IntersectionObserver((entries) => {
+                if (entries.some(entry => entry.isIntersecting)) runCheck();
+            }, { rootMargin: "80px 0px" });
+            observer.observe(el);
+        }
+
+        // IntersectionObserver 只在布局/滚动导致相交状态变化时回调。
+        // 面板打开时条目如果本来就在可视区域内，不会有任何回调；
+        // 因此挂载时/面板每次显示（windowShowTick 变化）时，只要条目当前
+        // 位于可视区域内就立即检测一次。
+        const rect = el.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const inView =
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.bottom > -80 &&
+            rect.top < viewportHeight + 80;
+        if (inView) runCheck();
+
+        return () => observer?.disconnect();
+    }, [item.id, item.content, item.is_external, item.file_preview_exists, onExternalMissing, windowShowTick]);
 
     const renderFilePreview = () => {
         if (item.file_preview_exists === false) return <div className="file-thumbnail-card error-bg" title={t('file_deleted')}><div className="file-icon-wrapper error-icon"><FileQuestion size={24} /></div><div className="file-info-wrapper"><div className="file-name error-text">{t('file_deleted')}</div><div className="file-hint error-text">{filePaths.length > 1 ? item.content : filePaths[0].split(/[\\/]/).pop()}</div></div></div>;
+        if (filePaths.length > 1 && allFilesAreImages) {
+            const shown = fileImagePaths.slice(0, 5);
+            return (
+                <div className="file-thumbnail-card" title={item.content} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                        {shown.map((p, i) => (
+                            <img key={i} src={toTauriLocalImageSrc(p) || convertFileSrc(p)} alt="" loading="lazy"
+                                style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--line-soft, rgba(128,128,128,0.25))', background: 'var(--bg-secondary, rgba(128,128,128,0.08))' }}
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                        ))}
+                    </div>
+                    <div className="file-info-wrapper" style={{ minWidth: 0 }}>
+                        <div className="file-name">{filePaths.length} {t('items')}</div>
+                        <div className="file-hint">{fileImagePaths[0].split(/[\\/]/).pop()}{fileImagePaths.length > shown.length ? ` +${fileImagePaths.length - shown.length}` : ''}</div>
+                    </div>
+                </div>
+            );
+        }
         if (filePaths.length > 1) return <div className="file-thumbnail-card" title={item.content}><div className="file-icon-wrapper"><Files size={24} /></div><div className="file-info-wrapper"><div className="file-name">{filePaths.length} {t('items')}</div><div className="file-hint">{filePaths[0].split(/[\\/]/).pop()} ...</div></div></div>;
         const filePath = filePaths[0];
-        return <div className="file-thumbnail-card" title={item.content}><div className={`file-icon-wrapper ${fileIcon ? 'file-icon-wrapper-system' : ''}`}>{fileIcon ? <img src={fileIcon} alt="" className="file-icon-image" /> : getFallbackFileIcon(filePath)}</div><div className="file-info-wrapper"><div className="file-name">{filePath.split(/[\\/]/).pop()}</div><div className="file-hint">{filePath.split(/[\\/]/).slice(0, -1).join('\\')}</div></div></div>;
+        return <div className="file-thumbnail-card" title={item.content}><div className={`file-icon-wrapper ${fileIcon ? 'file-icon-wrapper-system' : ''}`}>{fileIcon ? <img src={fileIcon} alt="" className="file-icon-image" loading="lazy" /> : getFallbackFileIcon(filePath)}</div><div className="file-info-wrapper"><div className="file-name">{filePath.split(/[\\/]/).pop()}</div><div className="file-hint">{filePath.split(/[\\/]/).slice(0, -1).join('\\')}</div></div></div>;
     };
 
+    // List payloads carry only thumbnails for base64 images (full content is
+    // fetched on demand); external images keep their file path as src. The
+    // thumbnail may still be in flight (background generation) — check the
+    // recent-thumb cache for late arrivals.
+    const listImageSrc = item.content
+        ? (item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || convertFileSrc(item.content)))
+        : (item.preview?.startsWith("data:") ? item.preview : (peekRecentThumb(item.id) ?? ""));
+
+    // A base64 image whose thumbnail has not streamed in yet has no src to
+    // render. Rendering <img src=""> would fire onError, which sets
+    // style.display='none'; React never clears that inline style (the style
+    // prop stays `{}`), so the tile would stay invisible even after the real
+    // thumbnail lands. Show a placeholder while pending, and clear any earlier
+    // error state on a successful load.
+    const imageTilePending = !listImageSrc;
+
+    const resetImageErrorState = (el: HTMLImageElement) => {
+        el.style.display = '';
+        el.parentElement?.classList.remove('image-load-error');
+    };
+
+    // The list empties `content` for base64 images, so fall back to the
+    // recorded local path when naming a deleted external image.
+    const deletedImageName = (item.content || item.source_file_path || "").split(/[\\/]/).pop() ?? "";
+
     return (
-        <motion.div id={id} layout={!disableLayout} initial={false} animate={{ marginBottom: 0 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.1 }}
-            className={`history-item ${isSelected ? "selected" : ""} ${compactMode ? "compact" : ""} ${item.is_pinned ? "pinned" : ""} ${item.content_type === 'file' ? 'file-item' : ''}`}
+        <motion.div ref={itemRef} id={id} layout={!disableLayout} initial={false} animate={{ marginBottom: 0 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.1 }}
+            className={`list-item history-item ${isSelected ? "selected" : ""} ${compactMode ? "compact" : ""} ${item.is_pinned ? "pinned" : ""} ${item.content_type === 'file' ? 'file-item' : ''}`}
             data-selected={isSelected}
             onMouseDown={(e) => {
                 // 阻止默认行为以防止在置顶模式下点击时原窗口失去光标焦点
@@ -490,18 +381,42 @@ const ClipboardItem = ({
                     e.preventDefault();
                 }
             }}
-            onClick={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); onCopy(false); onSelect(); }}
-            onContextMenu={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void hideCompactPreviewGlobal(); e.preventDefault(); onCopy(true); onSelect(); }}
-            onMouseEnter={(e) => { if (!canShowCompactPreview) return; hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 200); }}
-            onMouseMove={(e) => { if (canShowCompactPreview) hoverAnchorRef.current = { clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY }; }}
-            onMouseLeave={() => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void hideCompactPreviewGlobal(); }}
+            onClick={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void compactPreviewController.hide(previewOwner); onCopy(false); onSelect(); }}
+            onContextMenu={(e) => { if ((e.target as HTMLElement).closest('button, input, textarea')) return; if (item.is_external && item.file_preview_exists === false) { onSelect(); onOpen(e); return; } void compactPreviewController.hide(previewOwner); e.preventDefault(); onCopy(true); onSelect(); }}
+            onMouseEnter={(e) => {
+                if (!canShowCompactPreview) return;
+                const rect = itemRef.current?.getBoundingClientRect();
+                hoverAnchorRef.current = {
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    screenX: e.screenX,
+                    screenY: e.screenY,
+                    itemRect: rect
+                        ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+                        : { left: e.clientX, top: e.clientY, width: 0, height: 0 }
+                };
+                if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+                hoverTimerRef.current = setTimeout(() => { if (hoverAnchorRef.current) showCompactPreview(hoverAnchorRef.current); }, 200);
+            }}
+            onMouseMove={(e) => {
+                if (!canShowCompactPreview) return;
+                const prev = hoverAnchorRef.current;
+                hoverAnchorRef.current = {
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    screenX: e.screenX,
+                    screenY: e.screenY,
+                    itemRect: prev?.itemRect || { left: e.clientX, top: e.clientY, width: 0, height: 0 }
+                };
+            }}
+            onMouseLeave={() => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); hoverAnchorRef.current = null; void compactPreviewController.hide(previewOwner); }}
         >
             <div className="item-header">
                 <div className="item-app-info">
                     {dragControls && <div className="drag-handle" onPointerDown={(e) => dragControls.start(e)} style={{ cursor: 'grab', opacity: 0.5, marginRight: '4px' }}><GripVertical size={12} /></div>}
                     {item.is_pinned && !dragControls && <Pin size={10} style={{ color: 'var(--accent-color)', marginRight: '-2px', flexShrink: 0 }} />}
                     {showSourceAppIcon ? renderSourceAppIcon(sourceAppIcon, item.content_type, item.source_app) : getIcon(item.content_type)}
-                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{item.source_app}</span>
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{item.source_app.replace(/\.exe$/i, '')}</span>
                 </div>
                 <div className="item-timestamp" style={{ flexShrink: 0 }}>{getConciseTime(item.timestamp, language)}</div>
             </div>
@@ -509,15 +424,15 @@ const ClipboardItem = ({
             <div className={`content-preview ${item.content_type === 'rich_text' ? 'rich-text' : ''} ${item.content_type === 'file' ? 'file-preview' : ''} ${isSensitiveHidden ? 'sensitive-blur' : ''}`}>
                 {item.content_type === "image" ? (
                     <div style={{ position: 'relative' }}>
-                        {item.is_external && item.file_preview_exists === false ? <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}><ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} /><span style={{ marginBottom: '8px' }}>{t('image_deleted')}</span><span style={{ fontSize: '10px', opacity: 0.7, maxWidth: '80%', wordBreak: 'break-all', textAlign: 'center' }}>{item.content.split(/[\\/]/).pop()}</span></div> : <img src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || convertFileSrc(item.content))} alt={t('image_preview')} className="image-preview" style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('image-load-error'); }} />}
+                        {item.is_external && item.file_preview_exists === false ? <div className="image-preview error-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', height: '100px', fontSize: '12px' }}><ImageOff size={24} style={{ marginBottom: '8px', opacity: 0.5 }} /><span style={{ marginBottom: '8px' }}>{t('image_deleted')}</span><span style={{ fontSize: '10px', opacity: 0.7, maxWidth: '80%', wordBreak: 'break-all', textAlign: 'center' }}>{deletedImageName}</span></div> : imageTilePending ? <div className="image-preview-pending" /> : <img src={listImageSrc} alt={t('image_preview')} className="image-preview" style={isSensitiveHidden ? { filter: 'blur(8px)' } : {}} onLoad={(e) => resetImageErrorState(e.currentTarget)} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('image-load-error'); }} />}
                         {isSensitiveHidden && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontWeight: 'bold', opacity: 0.5, fontSize: '10px' }}>SENSITIVE</div>}
                     </div>
                 ) : item.content_type === "video" ? (
-                    <div className="video-thumbnail-card"><div className="video-thumbnail-wrapper"><video src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || item.content)} preload="metadata" muted playsInline className="video-thumbnail-element" onLoadedMetadata={(e) => seekVideoPreviewFrame(e.currentTarget)} /><div className="video-play-overlay"><Video size={16} /></div></div><div className="video-info-wrapper"><div className="video-name">{item.content.split(/[\\/]/).pop()}</div></div></div>
+                    <div className="video-thumbnail-card"><div className="video-thumbnail-wrapper"><video src={item.content.startsWith("data:") ? item.content : (toTauriLocalImageSrc(item.content) || item.content)} preload="none" muted playsInline className="video-thumbnail-element" onLoadedMetadata={(e) => seekVideoPreviewFrame(e.currentTarget)} /><div className="video-play-overlay"><Video size={16} /></div></div><div className="video-info-wrapper"><div className="video-name">{item.content.split(/[\\/]/).pop()}</div></div></div>
                 ) : item.content_type === "file" ? (
                     renderFilePreview()
                 ) : item.content_type === "rich_text" && item.html_content && !isSensitiveHidden ? (
-                    richTextPreviewSrc ? <img ref={richSnapshotImgRef} src={richTextPreviewSrc} alt="rich text preview" onLoad={() => { if (useSnapshotPreviewImage && richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } }} onError={() => { if (useRichImageFallback) { setRichImageFallbackFailed(true); return; } if (richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } if (effectiveRichTextSnapshotSrc) setSnapshotFailed(true); }} style={{ width: 'auto', maxWidth: '100%', maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, display: 'block', marginRight: 'auto', pointerEvents: 'none', borderRadius: '4px', maskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)' }} /> : <HtmlContent className="rich-text-preview" htmlContent={richTextCleanHtml || item.html_content} fallbackText={item.preview} preview={true} style={{ maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, overflow: 'hidden', fontSize: 'var(--clipboard-item-font-size)', lineHeight: '1.4', position: 'relative', pointerEvents: 'none', maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)' }} />
+                    richTextPreviewSrc ? <img ref={richSnapshotImgRef} src={richTextPreviewSrc} alt="rich text preview" loading="lazy" onLoad={() => { if (useSnapshotPreviewImage && richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } }} onError={() => { if (useRichImageFallback) { setRichImageFallbackFailed(true); return; } if (richSnapshotFallbackTimerRef.current) { clearTimeout(richSnapshotFallbackTimerRef.current); richSnapshotFallbackTimerRef.current = null; } if (effectiveRichTextSnapshotSrc) setSnapshotFailed(true); }} style={{ width: 'auto', maxWidth: '100%', maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, display: 'block', marginRight: 'auto', pointerEvents: 'none', borderRadius: '4px', maskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)' }} /> : <HtmlContent className="rich-text-preview" htmlContent={richTextCleanHtml || item.html_content} fallbackText={item.preview} preview={true} style={{ maxHeight: `${richTextSnapshotDisplayMaxHeight}px`, overflow: 'hidden', fontSize: 'var(--clipboard-item-font-size)', lineHeight: '1.4', position: 'relative', pointerEvents: 'none', maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)' }} />
                 ) : (
                     isSensitiveHidden ? <div style={{ minHeight: '24px', opacity: 0.6, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-mono)' }}><span style={{ letterSpacing: '1px' }}>{item.preview.substring(0, 3)}...</span><span style={{ fontSize: '10px', opacity: 0.7 }}>({item.content.length} {t('chars')})</span></div> : item.preview
                 )}

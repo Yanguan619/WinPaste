@@ -16,6 +16,7 @@ interface SettingsState {
   
   // General
   autoStart: boolean;
+  autoStartAdmin: boolean;
   silentStart: boolean;
   hideTrayIcon: boolean;
   edgeDocking: boolean;
@@ -57,9 +58,12 @@ interface SettingsState {
   dataPath: string;
   installedApps: InstalledAppOption[];
   defaultApps: DefaultAppsMap;
+  // Raw key-value snapshot of app.* settings loaded from DB (e.g. app.text, app.image)
+  appSettings: Record<string, string>;
   winClipboardDisabled: boolean;
   registryWinVEnabled: boolean;
   settingsLoaded: boolean;
+  settingsLoadError: string | null;
   sequentialMode: boolean;
 
   // Actions
@@ -72,6 +76,7 @@ interface SettingsState {
   setClipboardItemFontSize: (size: number) => void;
   setClipboardTagFontSize: (size: number) => void;
   setAutoStart: (enabled: boolean) => void;
+  setAutoStartAdmin: (enabled: boolean) => void;
   setSilentStart: (enabled: boolean) => void;
   setHideTrayIcon: (enabled: boolean) => void;
   setEdgeDocking: (enabled: boolean) => void;
@@ -105,9 +110,11 @@ interface SettingsState {
   setDataPath: (path: string) => void;
   setInstalledApps: (apps: InstalledAppOption[]) => void;
   setDefaultApps: (apps: DefaultAppsMap | ((prev: DefaultAppsMap) => DefaultAppsMap)) => void;
+  setAppSettings: (settings: Record<string, string>) => void;
   setWinClipboardDisabled: (disabled: boolean) => void;
   setRegistryWinVEnabled: (enabled: boolean) => void;
   setSettingsLoaded: (loaded: boolean) => void;
+  setSettingsLoadError: (error: string | null) => void;
   setSequentialModeState: (enabled: boolean) => void;
 }
 
@@ -122,6 +129,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   clipboardItemFontSize: 13,
   clipboardTagFontSize: 10,
   autoStart: true,
+  autoStartAdmin: false,
   silentStart: true,
   hideTrayIcon: false,
   edgeDocking: false,
@@ -155,9 +163,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   dataPath: "",
   installedApps: [],
   defaultApps: {},
+  appSettings: {},
   winClipboardDisabled: false,
   registryWinVEnabled: false,
   settingsLoaded: false,
+  settingsLoadError: null,
   sequentialMode: false,
 
   setLanguage: (language) => set({ language }),
@@ -169,6 +179,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setClipboardItemFontSize: (clipboardItemFontSize) => set({ clipboardItemFontSize }),
   setClipboardTagFontSize: (clipboardTagFontSize) => set({ clipboardTagFontSize }),
   setAutoStart: (autoStart) => set({ autoStart }),
+  setAutoStartAdmin: (autoStartAdmin) => set({ autoStartAdmin }),
   setSilentStart: (silentStart) => set({ silentStart }),
   setHideTrayIcon: (hideTrayIcon) => set({ hideTrayIcon }),
   setEdgeDocking: (edgeDocking) => set({ edgeDocking }),
@@ -204,8 +215,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setDefaultApps: (apps) => set((state) => ({ 
     defaultApps: typeof apps === 'function' ? apps(state.defaultApps) : apps 
   })),
+  setAppSettings: (appSettings) => set({ appSettings }),
   setWinClipboardDisabled: (winClipboardDisabled) => set({ winClipboardDisabled }),
   setRegistryWinVEnabled: (registryWinVEnabled) => set({ registryWinVEnabled }),
   setSettingsLoaded: (settingsLoaded) => set({ settingsLoaded }),
+  setSettingsLoadError: (settingsLoadError) => set({ settingsLoadError }),
   setSequentialModeState: (sequentialMode) => set({ sequentialMode }),
 }));

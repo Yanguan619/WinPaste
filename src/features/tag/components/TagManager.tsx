@@ -6,6 +6,7 @@ import {
     Clock, MousePointer2, Plus, Search, ExternalLink
 } from 'lucide-react';
 import { getTagColor } from "../../../shared/lib/utils";
+import { peekRecentThumb } from "../../../shared/lib/thumbnailCache";
 import type { ClipboardEntry } from "../../../shared/types";
 
 interface TagManagerProps {
@@ -18,6 +19,18 @@ interface TagInfo {
     count: number;
 }
 
+// List payloads carry only thumbnails for base64 images, so a tile whose
+// thumbnail has not streamed in yet has no src at all. Rendering
+// <img src=""> fires onError and leaves a broken tile, so return null and let
+// the caller draw a placeholder instead.
+const getCardImageSrc = (item: ClipboardEntry): string | null => {
+    if (item.content) {
+        return item.content.startsWith('data:') ? item.content : convertFileSrc(item.content);
+    }
+    if (item.preview?.startsWith('data:')) return item.preview;
+    return peekRecentThumb(item.id) ?? null;
+};
+
 export default function TagManager({ t, theme }: TagManagerProps) {
     const [tags, setTags] = useState<TagInfo[]>([]);
     const [tagSearch, setTagSearch] = useState('');
@@ -27,7 +40,7 @@ export default function TagManager({ t, theme }: TagManagerProps) {
     const [editingTag, setEditingTag] = useState<string | null>(null);
     const [newTagName, setNewTagName] = useState('');
     const [loading, setLoading] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('grid');
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [isDeleting, setIsDeleting] = useState(false);
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ show: boolean, tagName: string | null }>({ show: false, tagName: null });
     const [itemDeleteConfirmation, setItemDeleteConfirmation] = useState<{ show: boolean, id: number | null }>({ show: false, id: null });
@@ -120,6 +133,39 @@ export default function TagManager({ t, theme }: TagManagerProps) {
         } catch (err) { console.error(err); }
     };
 
+    // List payloads carry only thumbnails for base64 images; the backend
+    // generates them in the background and streams them via this event.
+    // Patch local tag items so their tiles fill in (the global cache is
+    // handled by App.tsx; this component keeps its own item list).
+    //
+    // One event per image would mean one re-render per image, so coalesce the
+    // arrivals into a single patch per animation frame.
+    useEffect(() => {
+        let pending = new Map<number, string>();
+        let frame = 0;
+
+        const flush = () => {
+            frame = 0;
+            const batch = pending;
+            pending = new Map();
+            setTagItems((prev) => prev.map((i) => {
+                const preview = batch.get(i.id);
+                return preview === undefined ? i : { ...i, preview };
+            }));
+        };
+
+        const off = listen<[number, string]>('clipboard-thumbnail', (event) => {
+            const [id, preview] = event.payload;
+            pending.set(id, preview);
+            if (!frame) frame = requestAnimationFrame(flush);
+        });
+
+        return () => {
+            off.then((f) => f());
+            if (frame) cancelAnimationFrame(frame);
+        };
+    }, []);
+
     const handleRenameTag = async (oldName: string) => {
         const trimmed = newTagName.trim();
         if (!trimmed || trimmed === oldName) { setEditingTag(null); return; }
@@ -207,7 +253,6 @@ export default function TagManager({ t, theme }: TagManagerProps) {
             {/* Tags bar: header + search in one row, then chips */}
             <div className="tag-sidebar">
                 <div className="tag-top-bar">
-                    <span className="header-label">{t('tags')}</span>
                     <div className="tag-search-box">
                         <Search size={14} className="search-icon-placeholder" />
                         <input
@@ -383,7 +428,9 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                         <div className="status-msg">{selectedTag ? t('no_items') : t('select_tag_to_begin')}</div>
                     ) : (
                         <div className={`items-${viewMode}`}>
-                            {sortedItems.map(item => (
+                            {sortedItems.map(item => {
+                                const cardImageSrc = getCardImageSrc(item);
+                                return (
                                 <div key={item.id} className="themed-card" onClick={() => copyToClipboard(item.id, item.content, item.content_type)}>
                                     <div className="card-top-row">
                                         <div className="card-actions-left">
@@ -420,12 +467,9 @@ export default function TagManager({ t, theme }: TagManagerProps) {
 
                                     {item.content_type === 'image' ? (
                                         <div className="card-media">
-                                            <img
-                                                src={item.content.startsWith('data:') ? item.content : convertFileSrc(item.content)}
-                                                alt=""
-                                                className="image-preview"
-                                                loading="lazy"
-                                            />
+                                            {cardImageSrc
+                                                ? <img src={cardImageSrc} alt="" className="image-preview" loading="lazy" />
+                                                : <div className="image-preview-pending" />}
                                         </div>
                                     ) : (
                                         <div className="card-body-text">{item.preview || item.content}</div>
@@ -437,7 +481,8 @@ export default function TagManager({ t, theme }: TagManagerProps) {
                                         <div className="meta-usage"><MousePointer2 size={8} /> {item.use_count || 0}</div>
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>

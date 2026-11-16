@@ -4,6 +4,7 @@ mod utils;
 pub use crate::database::DbState;
 use crate::app_state::SettingsState;
 use arboard::Clipboard;
+use image::ImageEncoder;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -63,6 +64,16 @@ fn read_clipboard_image_once(
     }
 
     let value = unsafe { crate::infrastructure::windows_api::win_clipboard::get_clipboard_image() };
+    *cache = Some(value.clone());
+    value
+}
+
+fn read_clipboard_html_once(cache: &mut Option<Option<Vec<u8>>>) -> Option<Vec<u8>> {
+    if let Some(value) = cache.as_ref() {
+        return value.clone();
+    }
+
+    let value = unsafe { crate::infrastructure::windows_api::win_clipboard::get_clipboard_raw_format("HTML Format") };
     *cache = Some(value.clone());
     value
 }
@@ -186,6 +197,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
         let mut cached_text: Option<Option<String>> = None;
         let mut cached_image: Option<Option<crate::infrastructure::windows_api::win_clipboard::ImageData>> = None;
+        let mut cached_html: Option<Option<Vec<u8>>> = None;
 
         // 3. Content-based deduplication with time window (for Chrome address bar, etc.)
         // Some apps trigger multiple clipboard updates with different sequence numbers
@@ -199,17 +211,30 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
         let current_content_hash = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            
+
             // Hash text content if available
             if let Some(text) = read_clipboard_text_once(&mut clipboard, &mut cached_text) {
                 text.hash(&mut hasher);
             }
-            
+
             // Also consider image hash if present
             if let Some(image) = read_clipboard_image_once(&mut cached_image) {
                 image.bytes.hash(&mut hasher);
             }
-            
+
+            // 富文本捕获开启时，把 HTML 也纳入哈希：
+            // 同一段文字、不同格式（加粗/颜色/链接）在 500ms 窗口内
+            // 连续复制时不应被去重误杀（修复“带格式文本漏捕”）。
+            let rich_text_enabled = app
+                .state::<SettingsState>()
+                .capture_rich_text
+                .load(Ordering::Relaxed);
+            if rich_text_enabled {
+                if let Some(html) = read_clipboard_html_once(&mut cached_html) {
+                    html.hash(&mut hasher);
+                }
+            }
+
             hasher.finish()
         };
         
@@ -265,14 +290,25 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                             monitor_state.last_text = content.clone();
                             
                             let settings = app.state::<SettingsState>();
-                            let mut should_process = false;
-                            if files.len() == 1 {
-                                let lower = files[0].to_lowercase();
-                                if lower.ends_with(".gif") || lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".bmp") || lower.ends_with(".webp") {
-                                    should_process = true;
-                                }
-                            }
-                            if should_process || should_capture_file_entries(settings.capture_files.load(Ordering::Relaxed)) {
+                            // Image files are always captured — single or
+                            // multi-selection. Other file types follow the
+                            // "capture files" setting.
+                            let all_image_files = files.iter().all(|f| {
+                                let lower = f.to_lowercase();
+                                lower.ends_with(".gif")
+                                    || lower.ends_with(".png")
+                                    || lower.ends_with(".jpg")
+                                    || lower.ends_with(".jpeg")
+                                    || lower.ends_with(".jfif")
+                                    || lower.ends_with(".bmp")
+                                    || lower.ends_with(".webp")
+                                    // NOTE: .avif intentionally excluded — the image crate
+                                    // only ships an *encoder* for AVIF (no decoder), so
+                                    // pasting AVIF through the image pipeline would always
+                                    // fail. AVIF files stay plain files (CF_HDROP).
+                                    || lower.ends_with(".svg")
+                            });
+                            if all_image_files || should_capture_file_entries(settings.capture_files.load(Ordering::Relaxed)) {
                                 process_new_entry(&app, ClipboardData::Files(files), None, Some(source_snapshot.clone()));
                             }
                         }
@@ -289,13 +325,21 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
             let has_text = read_clipboard_text_once(&mut clipboard, &mut cached_text)
                 .map(|t| !t.trim().is_empty())
                 .unwrap_or(false);
-            let has_rich_html = if rich_text_enabled && has_text {
-                unsafe {
-                    crate::infrastructure::windows_api::win_clipboard::get_clipboard_raw_format("HTML Format")
-                        .and_then(|raw| parse_cf_html(&raw))
-                        .map(|html| !html.trim().is_empty())
-                        .unwrap_or(false)
-                }
+            let has_image = unsafe {
+                crate::infrastructure::windows_api::win_clipboard::clipboard_has_image()
+            };
+
+            // 富文本判定不再要求剪贴板必须有纯文本（修复 HTML-only 漏捕）：
+            // - 纯文本 + HTML → 富文本
+            // - 仅 HTML（无纯文本、无图片）→ 富文本（文本从 HTML 提取）
+            // - HTML + 图片但无纯文本（如网页复制图片）→ 仍按图片捕获
+            let has_rich_html = if rich_text_enabled {
+                let html_non_empty = read_clipboard_html_once(&mut cached_html)
+                    .as_deref()
+                    .and_then(parse_cf_html)
+                    .map(|html| !html.trim().is_empty())
+                    .unwrap_or(false);
+                html_non_empty && (has_text || !has_image)
             } else {
                 false
             };
@@ -356,7 +400,19 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
                                     if let Some(img_buf) = image::RgbaImage::from_raw(image.width as u32, image.height as u32, image.bytes) {
                                         let mut bytes: Vec<u8> = Vec::new();
                                         let mut cursor = std::io::Cursor::new(&mut bytes);
-                                        if img_buf.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
+                                        // Fast PNG encoding — default compression made
+                                        // large screenshots delay capture.
+                                        let encoder = image::codecs::png::PngEncoder::new_with_quality(
+                                            &mut cursor,
+                                            image::codecs::png::CompressionType::Fast,
+                                            image::codecs::png::FilterType::NoFilter,
+                                        );
+                                        if encoder.write_image(
+                                            img_buf.as_raw(),
+                                            image.width as u32,
+                                            image.height as u32,
+                                            image::ExtendedColorType::Rgba8,
+                                        ).is_ok() {
                                             let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
                                             process_new_entry(&app, ClipboardData::Image { data_url: format!("data:image/png;base64,{}", b64) }, None, Some(source_snapshot.clone()));
                                             handled = true;
@@ -373,58 +429,84 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 
         // 3. Check Text
         if !handled {
-            if let Some(text) = read_clipboard_text_once(&mut clipboard, &mut cached_text) {
-                if !text.is_empty() {
-                    let settings = app.state::<SettingsState>();
-                    
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    use std::hash::{Hash, Hasher};
-                    text.trim().replace("\r\n", "\n").hash(&mut hasher);
-                    let current_hash = hasher.finish();
+            let text_opt = read_clipboard_text_once(&mut clipboard, &mut cached_text);
+            let has_nonempty_text = text_opt.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
 
-                    let last_app_hash = crate::LAST_APP_SET_HASH.load(Ordering::SeqCst);
-                    let last_app_time = crate::LAST_APP_SET_TIMESTAMP.load(Ordering::SeqCst);
-                    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            if has_nonempty_text {
+                let text = text_opt.unwrap();
+                let settings = app.state::<SettingsState>();
 
-                    if (last_app_hash != 0 && (current_hash == last_app_hash || current_hash == crate::LAST_APP_SET_HASH_ALT.load(Ordering::SeqCst))) && (now_secs - last_app_time) < 10 {
-                        crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst);
-                        crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);
-                        monitor_state.last_text = text.clone();
-                        return;
-                    }
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                use std::hash::{Hash, Hasher};
+                text.trim().replace("\r\n", "\n").hash(&mut hasher);
+                let current_hash = hasher.finish();
 
-                    if settings.capture_rich_text.load(Ordering::Relaxed) {
-                        if let Some(html_raw) = unsafe { crate::infrastructure::windows_api::win_clipboard::get_clipboard_raw_format("HTML Format") } {
-                            if let Some(html) = parse_cf_html(&html_raw) {
-                                if !html.trim().is_empty() {
-                                    let mut html_to_store = html;
+                let last_app_hash = crate::LAST_APP_SET_HASH.load(Ordering::SeqCst);
+                let last_app_time = crate::LAST_APP_SET_TIMESTAMP.load(Ordering::SeqCst);
+                let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
-                                    // If source clipboard also carries an image format, keep it as a rich fallback
-                                    // so paste targets can choose image/HTML/text based on their own priority rules.
-                                    if let Some(data_url) = clipboard_image_fallback_data_url() {
-                                        html_to_store = attach_rich_image_fallback(&html_to_store, &data_url);
-                                    }
+                if (last_app_hash != 0 && (current_hash == last_app_hash || current_hash == crate::LAST_APP_SET_HASH_ALT.load(Ordering::SeqCst))) && (now_secs - last_app_time) < 10 {
+                    crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst);
+                    crate::LAST_APP_SET_HASH_ALT.store(0, Ordering::SeqCst);
+                    monitor_state.last_text = text.clone();
+                    return;
+                }
 
-                                    monitor_state.last_text = text.clone();
-                                    process_new_entry(
-                                        &app,
-                                        ClipboardData::RichText {
-                                            text: text.clone(),
-                                            html: html_to_store,
-                                        },
-                                        None,
-                                        Some(source_snapshot.clone()),
-                                    );
-                                    handled = true;
+                if settings.capture_rich_text.load(Ordering::Relaxed) {
+                    if let Some(html) = read_clipboard_html_once(&mut cached_html)
+                        .as_deref()
+                        .and_then(parse_cf_html)
+                    {
+                        if !html.trim().is_empty() {
+                            let mut html_to_store = html;
+
+                            // If source clipboard also carries an image format, keep it as a rich fallback
+                            // so paste targets can choose image/HTML/text based on their own priority rules.
+                            // 先做无拷贝的格式探测：纯文本富文本复制不再白跑图片兜底重试。
+                            if unsafe { crate::infrastructure::windows_api::win_clipboard::clipboard_has_image() } {
+                                if let Some(data_url) = clipboard_image_fallback_data_url() {
+                                    html_to_store = attach_rich_image_fallback(&html_to_store, &data_url);
                                 }
                             }
+
+                            monitor_state.last_text = text.clone();
+                            process_new_entry(
+                                &app,
+                                ClipboardData::RichText {
+                                    text: text.clone(),
+                                    html: html_to_store,
+                                },
+                                None,
+                                Some(source_snapshot.clone()),
+                            );
+                            handled = true;
                         }
                     }
+                }
 
-                    if !handled {
-                        if last_app_hash != 0 { crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst); }
-                        monitor_state.last_text = text.clone();
-                        process_new_entry(&app, ClipboardData::Text(text), None, Some(source_snapshot.clone()));
+                if !handled {
+                    if last_app_hash != 0 { crate::LAST_APP_SET_HASH.store(0, Ordering::SeqCst); }
+                    monitor_state.last_text = text.clone();
+                    process_new_entry(&app, ClipboardData::Text(text), None, Some(source_snapshot.clone()));
+                }
+            } else if app.state::<SettingsState>().capture_rich_text.load(Ordering::Relaxed) {
+                // HTML-only 剪贴板（无 CF_UNICODETEXT、无图片）：
+                // 从 HTML 提取纯文本作为内容，按富文本条目捕获（修复 HTML-only 漏捕）。
+                if let Some(html) = read_clipboard_html_once(&mut cached_html)
+                    .as_deref()
+                    .and_then(parse_cf_html)
+                {
+                    if !html.trim().is_empty() {
+                        let derived = derive_rich_text_content("", Some(&html));
+                        if !derived.trim().is_empty() {
+                            monitor_state.last_text = String::new();
+                            process_new_entry(
+                                &app,
+                                ClipboardData::RichText { text: derived, html },
+                                None,
+                                Some(source_snapshot.clone()),
+                            );
+                        }
                     }
                 }
             }
@@ -433,7 +515,7 @@ pub fn start_clipboard_monitor(app_handle: AppHandle) {
 }
 
 pub use pipeline::{ClipboardData, ClipboardPipeline, PipelineContext};
-pub use utils::{build_entry_preview, derive_rich_text_content, repair_html_fragment, truncate_html_for_preview};
+pub use utils::{build_entry_preview, derive_rich_text_content, repair_html_fragment, truncate_html_for_preview, build_image_thumbnail_data_url, build_image_preview_data_url};
 
 pub fn process_new_entry(
     app_handle: &AppHandle,

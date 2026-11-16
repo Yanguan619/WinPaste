@@ -14,6 +14,10 @@ use std::sync::{Arc, Mutex};
 pub struct DbState {
     pub conn: Arc<Mutex<Connection>>,
     pub repo: SqliteClipboardRepository,
+    /// Read-only connection used exclusively by search. WAL lets it read
+    /// concurrently with the write connection, so a slow LIKE scan can no
+    /// longer block paste/bookkeeping work behind the shared mutex.
+    pub search_repo: SqliteClipboardRepository,
     pub settings_repo: SqliteSettingsRepository,
     pub tag_repo: SqliteTagRepository,
     pub sticky_repo: SqliteStickyRepository,
@@ -101,20 +105,25 @@ pub fn save_image_to_file(data_url: &str, data_dir: &std::path::Path) -> Option<
     use std::io::Write;
     let parts: Vec<&str> = data_url.splitn(2, ',').collect();
     if parts.len() < 2 { return None; }
-    
+
     let decoded = base64::engine::general_purpose::STANDARD.decode(parts[1]).ok()?;
-    
+
     let attachments_dir = data_dir.join("attachments");
     if !attachments_dir.exists() {
         let _ = std::fs::create_dir_all(&attachments_dir);
     }
-    
+
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     use std::hash::{Hash, Hasher};
     decoded.hash(&mut hasher);
     let hash = hasher.finish();
-    
-    let file_name = format!("img_{:x}.png", hash);
+
+    // Use the MIME from the data URL for the extension: SVG bytes must not be
+    // stored with a .png name — pasting such an entry would produce a broken
+    // file (see clipboard_ops). Everything else keeps .png for compatibility.
+    let mime = parts[0].to_ascii_lowercase();
+    let ext = if mime.contains("svg") { "svg" } else { "png" };
+    let file_name = format!("img_{:x}.{}", hash, ext);
     let file_path = attachments_dir.join(&file_name);
     
     if !file_path.exists() {
@@ -211,6 +220,10 @@ pub fn seed_defaults(conn: &Connection) -> Result<()> {
     );
     let _ = conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.hide_tray_icon', 'false')",
+        [],
+    );
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('app.lightweight_mode', 'false')",
         [],
     );
     let _ = conn.execute(
@@ -358,6 +371,7 @@ mod tests {
                 html_content TEXT,
                 source_app TEXT NOT NULL,
                 source_app_path TEXT,
+                source_file_path TEXT,
                 timestamp INTEGER NOT NULL,
                 preview TEXT NOT NULL,
                 is_pinned INTEGER NOT NULL DEFAULT 0,
@@ -397,6 +411,9 @@ mod tests {
             )",
             [],
         ).unwrap();
+        // Run the real migrations so tests exercise the production schema
+        // (FTS index + triggers included), not a hand-rolled subset of it.
+        crate::infrastructure::repository::migrations::run_migrations(&conn).unwrap();
         conn
     }
 
@@ -411,6 +428,7 @@ mod tests {
             html_content: None,
             source_app: "TestApp".to_string(),
             source_app_path: Some("C:\\TestApp.exe".to_string()),
+            source_file_path: None,
             timestamp: 123456789,
             preview: "Hello...".to_string(),
             is_pinned: false,
@@ -433,6 +451,236 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "Hello Integration Test");
         assert_eq!(history[0].source_app, "TestApp");
+    }
+
+    #[test]
+    fn test_data_url_image_stays_in_database() {
+        let conn = setup_test_db();
+
+        let mut png_bytes = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut png_bytes);
+            image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]))
+                .write_to(&mut cursor, image::ImageFormat::Png)
+                .unwrap();
+        }
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&png_bytes)
+        );
+
+        let entry = ClipboardEntry {
+            id: 0,
+            content_type: "image".to_string(),
+            content: data_url.clone(),
+            html_content: None,
+            source_app: "TestApp".to_string(),
+            source_app_path: Some("C:\\TestApp.exe".to_string()),
+            source_file_path: None,
+            timestamp: 123456789,
+            preview: "[Image Content]".to_string(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            file_preview_exists: true,
+        };
+
+        let conn_arc = Arc::new(Mutex::new(conn));
+        let repo = SqliteClipboardRepository::new(conn_arc);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let data_dir = std::env::temp_dir().join(format!("winpaste_db_test_{}_{}", std::process::id(), nanos));
+
+        let id = repo.save(&entry, Some(&data_dir)).expect("保存失败");
+        assert!(id > 0);
+
+        let history = repo.get_history(10, 0, None).expect("获取历史失败");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, data_url);
+        assert!(!history[0].is_external);
+        assert!(!data_dir.join("attachments").exists());
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn test_search_excludes_base64_images_but_matches_local_path() {
+        let conn = setup_test_db();
+        let conn_arc = Arc::new(Mutex::new(conn));
+        let repo = SqliteClipboardRepository::new(conn_arc);
+
+        let mut png_bytes = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut png_bytes);
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+                .write_to(&mut cursor, image::ImageFormat::Png)
+                .unwrap();
+        }
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&png_bytes)
+        );
+
+        // Screenshot: base64 image without a local address source → NOT searchable.
+        let screenshot = ClipboardEntry {
+            id: 0,
+            content_type: "image".to_string(),
+            content: data_url.clone(),
+            html_content: None,
+            source_app: "Snipping Tool".to_string(),
+            source_app_path: None,
+            source_file_path: None,
+            timestamp: 123456789,
+            preview: "[Image Content]".to_string(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            file_preview_exists: true,
+        };
+        repo.save(&screenshot, None).expect("保存失败");
+
+        // Image copied from disk: embedded as data URL, but has a local address
+        // source (xx1 folder) → searching the folder name finds it.
+        let from_disk = ClipboardEntry {
+            id: 0,
+            content_type: "image".to_string(),
+            content: data_url,
+            html_content: None,
+            source_app: "Explorer".to_string(),
+            source_app_path: None,
+            source_file_path: Some("C:\\Users\\me\\xx1\\photo.png".to_string()),
+            timestamp: 123456790,
+            preview: "[Image Content]".to_string(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            file_preview_exists: true,
+        };
+        repo.save(&from_disk, None).expect("保存失败");
+
+        // The base64 payload / mime header must never match (this was the
+        // freeze: every image matched "image"/"png" and the whole multi-MB
+        // payload was lowercased per keystroke).
+        assert!(repo.search("image", 20).unwrap().is_empty());
+        assert!(repo.search("iVBOR", 20).unwrap().is_empty());
+
+        // "png" no longer matches every screenshot through its base64 header,
+        // but it still finds the disk-copied image through its local address
+        // (source_file_path ...photo.png) — not through the base64 payload.
+        let png = repo.search("png", 20).unwrap();
+        assert_eq!(png.len(), 1);
+        assert_eq!(png[0].source_file_path.as_deref(), Some("C:\\Users\\me\\xx1\\photo.png"));
+
+        // The local address source still participates in search.
+        let found = repo.search("xx1", 20).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].source_file_path.as_deref(), Some("C:\\Users\\me\\xx1\\photo.png"));
+    }
+
+    #[test]
+    fn test_search_fts_substring_case_and_trigger_sync() {
+        let conn = setup_test_db();
+        let conn_arc = Arc::new(Mutex::new(conn));
+        let repo = SqliteClipboardRepository::new(conn_arc);
+
+        let entry = ClipboardEntry {
+            id: 0,
+            content_type: "text".to_string(),
+            content: "Microsoft Teams 微信支付记录 会议纪要".to_string(),
+            html_content: None,
+            source_app: "WeChat".to_string(),
+            source_app_path: None,
+            source_file_path: None,
+            timestamp: 123456791,
+            preview: "preview".to_string(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            file_preview_exists: true,
+        };
+        let id = repo.save(&entry, None).expect("保存失败");
+
+        // Mid-token latin substring — trigram FTS keeps LIKE semantics.
+        assert_eq!(repo.search("crosof", 20).unwrap().len(), 1);
+        // CJK substring via the FTS index (3+ chars).
+        assert_eq!(repo.search("支付记", 20).unwrap().len(), 1);
+        // 2-char term falls back to the legacy LIKE scan and still matches.
+        assert_eq!(repo.search("支付", 20).unwrap().len(), 1);
+        // source_app match stays (ASCII) case-insensitive like the old LIKE.
+        assert_eq!(repo.search("wechat", 20).unwrap().len(), 1);
+
+        // UPDATE trigger: a content change re-indexes the row.
+        repo.update_entry_content(id, "彻底不同的内容 abcdef", "彻底不同的内容 abcdef").expect("更新失败");
+        assert!(repo.search("crosof", 20).unwrap().is_empty());
+        assert_eq!(repo.search("abcdef", 20).unwrap().len(), 1);
+
+        // DELETE trigger: the row leaves the index.
+        repo.delete(id, None).expect("删除失败");
+        assert!(repo.search("abcdef", 20).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_search_works_on_dedicated_read_only_connection() {
+        // 正式版搜索跑在独立只读连接上（WAL 下与写连接并发）。这里用真实文件库
+        // 验证：写连接仍在时，只读连接能读到已提交数据，FTS/触发器同步可见。
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "winpaste_ro_search_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("clipboard.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        let conn = init_db(&db_path_str).expect("初始化失败");
+        let write_repo = SqliteClipboardRepository::new(Arc::new(Mutex::new(conn)));
+        let entry = ClipboardEntry {
+            id: 0,
+            content_type: "text".to_string(),
+            content: "read only connection sentinel 只读连接搜索".to_string(),
+            html_content: None,
+            source_app: "WinPaste".to_string(),
+            source_app_path: None,
+            source_file_path: None,
+            timestamp: 123456792,
+            preview: "preview".to_string(),
+            is_pinned: false,
+            tags: vec![],
+            use_count: 0,
+            is_external: false,
+            pinned_order: 0,
+            file_preview_exists: true,
+        };
+        write_repo.save(&entry, None).expect("保存失败");
+
+        let ro_conn = Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("只读连接打开失败");
+        let read_repo = SqliteClipboardRepository::new(Arc::new(Mutex::new(ro_conn)));
+
+        // 3+ 字符走 FTS，1-2 字符走 LIKE 回退，两者都必须能读到写连接的提交。
+        assert_eq!(read_repo.search("sentinel", 20).unwrap().len(), 1);
+        assert_eq!(read_repo.search("只读", 20).unwrap().len(), 1);
+
+        drop(read_repo);
+        drop(write_repo);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

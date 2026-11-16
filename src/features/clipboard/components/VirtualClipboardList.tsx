@@ -1,8 +1,8 @@
-import React, { useRef, useImperativeHandle, useCallback, useMemo } from 'react';
+import React, { useRef, useImperativeHandle, useCallback, useMemo, useState } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
-import type { ListRange } from 'react-virtuoso';
 import type { ClipboardEntry } from "../../../shared/types";
 import type { VirtualClipboardListHandle, VirtualClipboardListProps } from "../types";
+import { OverlayScrollbar } from "./OverlayScrollbar";
 
 type VirtuosoListContext = {
     header?: React.ReactNode;
@@ -33,142 +33,109 @@ const ListFooter = ({ context }: { context?: VirtuosoListContext }) => {
     );
 };
 
-const VirtualClipboardList = React.forwardRef<VirtualClipboardListHandle, VirtualClipboardListProps>(
-    (props, ref) => {
-        const {
-            items,
-            renderItem,
-            onLoadMore,
-            hasMore,
-            isLoading,
-            selectedIndex,
-            isKeyboardMode,
-            onScroll,
-            compactMode,
-            header
-        } = props;
+/**
+ * 通用虚拟列表组件，支持任意数据类型。
+ * 保留对 ClipboardEntry 的兼容（默认泛型参数）。
+ */
+function VirtualList<T = ClipboardEntry>(
+    props: VirtualClipboardListProps<T> & {
+        listRef?: React.RefObject<VirtualClipboardListHandle | null>;
+    }
+) {
+    const {
+        items,
+        renderItem,
+        onLoadMore,
+        hasMore,
+        isLoading,
+        onScroll,
+        compactMode,
+        header,
+        listRef
+    } = props;
 
-        const virtuosoRef = useRef<VirtuosoHandle>(null);
-        const visibleRangeRef = useRef<ListRange | null>(null);
-        useImperativeHandle(ref, () => ({
-            scrollToItem: (index: number) => {
-                virtuosoRef.current?.scrollIntoView({
-                    index,
-                    behavior: 'smooth',
-                    align: 'center',
-                });
-            },
-            scrollToTop: () => {
-                virtuosoRef.current?.scrollTo({
-                    top: 0,
-                    behavior: 'auto'
-                });
-            },
-            resetAfterIndex: (_index: number) => {
-                // Not needed with Virtuoso as it handles dynamic heights automatically
-            }
-        }));
+    const virtuosoRef = useRef<VirtuosoHandle>(null);
+    const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null);
+    const scrollbarRefreshRef = useRef<(() => void) | null>(null);
+    useImperativeHandle(listRef, () => ({
+        // 键盘导航的滚动统一由 useScrollToSelection 驱动。
+        // 只有目标条目被虚拟列表回收（未挂载、距离较远）时才会走到这里：
+        // 按移动方向选择对齐方式，向上对齐顶部、向下对齐底部，
+        // 避免居中大跳导致列表来回晃动。
+        scrollToItem: (index: number, align: 'start' | 'center' | 'end' = 'center') => {
+            virtuosoRef.current?.scrollIntoView({
+                index,
+                behavior: 'auto',
+                align,
+            });
+        },
+        scrollToTop: () => {
+            virtuosoRef.current?.scrollTo({
+                top: 0,
+                behavior: 'auto'
+            });
+        },
+        resetAfterIndex: (_index: number) => {
+            // Not needed with Virtuoso as it handles dynamic heights automatically
+        }
+    }));
 
-        // Keep keyboard selection visible even when the item is only in overscan
-        React.useEffect(() => {
-            if (!isKeyboardMode) return;
+    // Handle scroll events
+    const handleScroll = useCallback((scrollTop: number) => {
+        onScroll?.(scrollTop);
+    }, [onScroll]);
 
-            // If selectedIndex is negative, it means a pinned item is selected (handled in parent).
-            // We should ensure the list is scrolled to the top so pinned items are visible.
-            if (selectedIndex < 0) {
-                virtuosoRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-                return;
-            }
+    // Handle end reached for infinite loading
+    const handleEndReached = useCallback(() => {
+        if (hasMore && !isLoading && onLoadMore) {
+            onLoadMore();
+        }
+    }, [hasMore, isLoading, onLoadMore]);
 
-            const range = visibleRangeRef.current;
-            const edgeBuffer = 1;
-
-            if (!range) {
-                virtuosoRef.current?.scrollToIndex({
-                    index: selectedIndex,
-                    behavior: 'auto',
-                    align: 'center',
-                });
-                return;
-            }
-
-            if (selectedIndex < range.startIndex + edgeBuffer) {
-                virtuosoRef.current?.scrollToIndex({
-                    index: selectedIndex,
-                    behavior: 'auto',
-                    align: 'start',
-                });
-                return;
-            }
-
-            if (selectedIndex > range.endIndex - edgeBuffer) {
-                virtuosoRef.current?.scrollToIndex({
-                    index: selectedIndex,
-                    behavior: 'auto',
-                    align: 'end',
-                });
-            }
-        }, [selectedIndex, isKeyboardMode]);
-
-
-        // Handle scroll events
-        const handleScroll = useCallback((scrollTop: number) => {
-            onScroll?.(scrollTop);
-        }, [onScroll]);
-
-        // Handle end reached for infinite loading
-        const handleEndReached = useCallback(() => {
-            if (hasMore && !isLoading && onLoadMore) {
-                onLoadMore();
-            }
-        }, [hasMore, isLoading, onLoadMore]);
-
-        const handleRangeChanged = useCallback((range: ListRange) => {
-            visibleRangeRef.current = range;
-        }, []);
-
-        // Memoized item renderer for Virtuoso
-        const itemContent = useCallback((index: number, item: ClipboardEntry) => {
-            return (
-                <div style={{ paddingBottom: compactMode ? 2 : 4 ,width: 'calc(100% - 12px)'}}>
-                    {renderItem(item, index, index === 0)}
-                </div>
-            );
-        }, [renderItem, compactMode]);
-
-        const components = useMemo(() => ({
-            Header: ListHeader,
-            Footer: ListFooter
-        }), []);
-
-        const context = useMemo(() => ({
-            header,
-            hasMore,
-            isLoading
-        }), [header, hasMore, isLoading]);
-
+    // Memoized item renderer for Virtuoso
+    const itemContent = useCallback((index: number, item: T) => {
         return (
-            <div className="virtual-list-wrapper" style={{ height: '100%', width: '100%' }}>
-                <Virtuoso
-                    ref={virtuosoRef}
-                    data={items}
-                    itemContent={itemContent}
-                    components={components}
-                    context={context}
-                    style={{ height: '100%'}}                    
-                    onScroll={(e) => handleScroll((e.currentTarget as HTMLElement).scrollTop)}
-                    endReached={handleEndReached}
-                    rangeChanged={handleRangeChanged}
-                    overscan={200} // Pre-render 200px of content for smoother scrolling
-                />
+            <div style={{ paddingBottom: compactMode ? 0 : 4 }}>
+                {renderItem(item, index, index === 0)}
             </div>
         );
-    }
-);
+    }, [renderItem, compactMode]);
 
-VirtualClipboardList.displayName = 'VirtualClipboardList';
+    const components = useMemo(() => ({
+        Header: ListHeader,
+        Footer: ListFooter
+    }), []);
 
-export { VirtualClipboardList };
-export default VirtualClipboardList;
+    const context = useMemo(() => ({
+        header,
+        hasMore,
+        isLoading
+    }), [header, hasMore, isLoading]);
 
+    return (
+        <div className="virtual-list-wrapper" style={{ height: '100%', width: '100%' }}>
+            <Virtuoso<T>
+                ref={virtuosoRef}
+                data={items}
+                itemContent={itemContent}
+                components={components}
+                context={context}
+                style={{ height: '100%' }}
+                onScroll={(e) => handleScroll((e.currentTarget as HTMLElement).scrollTop)}
+                endReached={handleEndReached}
+                overscan={200} // Pre-render 200px of content for smoother scrolling
+                scrollerRef={(ref) => setScrollerEl(ref instanceof HTMLElement ? ref : null)}
+                totalListHeightChanged={() => scrollbarRefreshRef.current?.()}
+            />
+            <OverlayScrollbar
+                scroller={scrollerEl}
+                onRegisterRefresh={(fn) => { scrollbarRefreshRef.current = fn; }}
+            />
+        </div>
+    );
+}
 
+VirtualList.displayName = 'VirtualList';
+
+export { VirtualList };
+export default VirtualList;

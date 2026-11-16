@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WinPaste",
-  "version": "2026.7.16",
+  "version": "1.9.3",
   "identifier": "com.winpaste.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1422",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist/web"
   },
   "app": {
@@ -20,6 +20,7 @@
         "minHeight": 300,
         "resizable": true,
         "fullscreen": false,
+        "shadow": false,
         "transparent": true,
         "alwaysOnTop": true,
         "decorations": false,
@@ -33,22 +34,13 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob: http: https:; media-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; video-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: http:;",
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$HOME/**",
-          "C:/**",
-          "D:/**",
-          "E:/**"
-        ]
+        "scope": ["$HOME/**", "C:/**", "D:/**", "E:/**"]
       },
       "capabilities": [
         {
           "identifier": "main-capability",
           "description": "Main window capabilities",
-          "windows": [
-            "main",
-            "compact-preview",
-            "sticky-*"
-          ],
+          "windows": ["main", "compact-preview", "sticky-*"],
           "permissions": [
             "core:window:allow-start-dragging",
             "core:window:allow-hide",
@@ -62,6 +54,7 @@
             "core:window:allow-set-position",
             "core:window:allow-set-always-on-top",
             "core:window:allow-current-monitor",
+            "core:window:allow-outer-size",
             "core:window:allow-cursor-position",
             "core:window:allow-create",
             "core:window:allow-get-all-windows",
@@ -74,6 +67,7 @@
             "core:event:allow-listen",
             "core:event:allow-unlisten",
             "core:event:allow-emit",
+            "core:event:allow-emit-to",
             "core:app:allow-version",
             "core:app:default",
             "dialog:allow-open",
@@ -118,10 +112,10 @@
               "identifier": "opener:allow-open-url",
               "allow": [
                 {
-                  "url": "https://winpaste.name666.top/**"
+                  "url": "https://eq1024.github.io/**"
                 },
                 {
-                  "url": "https://github.com/jimuzhe/winpaste/**"
+                  "url": "https://github.com/eq1024/WinPaste/**"
                 }
               ]
             },
@@ -133,24 +127,15 @@
   },
   "bundle": {
     "active": true,
-    "icon": [
-      "icons/winpaste.png",
-      "icons/icon.ico"
-    ],
-    "targets": [
-      "nsis"
-    ],
+    "icon": ["icons/winpaste.png", "icons/icon.ico"],
+    "targets": ["nsis"],
     "windows": {
       "nsis": {
-        "installMode": "currentUser",
+        "installMode": "both",
         "installerIcon": "icons/icon.ico",
         "compression": "lzma",
         "installerHooks": "nsis/uninstall.nsh",
-        "languages": [
-          "English",
-          "SimpChinese",
-          "TradChinese"
-        ],
+        "languages": ["English", "SimpChinese", "TradChinese"],
         "displayLanguageSelector": true,
         "startMenuFolder": "WinPaste"
       }
